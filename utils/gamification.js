@@ -1,4 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  DEFAULT_GAMIFICATION_STATS,
+  addActivityToStats,
+  calculateChallengeProgress,
+  getPeriodStart,
+  mergeGamificationStats,
+} from './gamificationCore';
 
 const GAMIFICATION_KEY = '@trail_tracker_gamification';
 const SELECTED_CHALLENGE_KEY = '@trail_tracker_selected_challenge';
@@ -101,6 +108,15 @@ export const ACHIEVEMENTS = {
     category: 'general',
     tier: 'bronze',
     check: (stats) => stats.walkingActivities >= 1 && stats.bikingActivities >= 1,
+  },
+  all_three_types: {
+    id: 'all_three_types',
+    name: 'Triple Threat',
+    description: 'Complete a walk, a run and a bike ride',
+    icon: 'all-inclusive',
+    category: 'general',
+    tier: 'silver',
+    check: (stats) => stats.walkingActivities >= 1 && stats.runningActivities >= 1 && stats.bikingActivities >= 1,
   },
   early_bird: {
     id: 'early_bird',
@@ -394,6 +410,92 @@ export const ACHIEVEMENTS = {
     category: 'walking',
     tier: 'gold',
     check: (stats) => stats.walkingActivities >= 50,
+  },
+
+  // --- RUNNING ACHIEVEMENTS ---
+  run_first_km: {
+    id: 'run_first_km', name: 'First Run', description: 'Run your first kilometre', icon: 'run-fast', category: 'running', tier: 'bronze',
+    check: (stats, activity) => activity && activity.type === 'running' && activity.distance >= 1,
+  },
+  run_3km: {
+    id: 'run_3km', name: 'Finding Your Stride', description: 'Run 3km in one activity', icon: 'run-fast', category: 'running', tier: 'bronze',
+    check: (stats, activity) => activity && activity.type === 'running' && activity.distance >= 3,
+  },
+  run_5km: {
+    id: 'run_5km', name: 'Five K Finisher', description: 'Run 5km in one activity', icon: 'medal-outline', category: 'running', tier: 'silver',
+    check: (stats, activity) => activity && activity.type === 'running' && activity.distance >= 5,
+  },
+  run_10km: {
+    id: 'run_10km', name: 'Ten K Finisher', description: 'Run 10km in one activity', icon: 'medal', category: 'running', tier: 'silver',
+    check: (stats, activity) => activity && activity.type === 'running' && activity.distance >= 10,
+  },
+  run_half_marathon: {
+    id: 'run_half_marathon', name: 'Half Marathon Runner', description: 'Run 21.1km in one activity', icon: 'medal', category: 'running', tier: 'gold',
+    check: (stats, activity) => activity && activity.type === 'running' && activity.distance >= 21.1,
+  },
+  run_marathon: {
+    id: 'run_marathon', name: 'Marathon Runner', description: 'Run 42.195km in one activity', icon: 'trophy-outline', category: 'running', tier: 'gold',
+    check: (stats, activity) => activity && activity.type === 'running' && activity.distance >= 42.195,
+  },
+  run_total_10km: {
+    id: 'run_total_10km', name: 'Running Start', description: 'Run 10km total', icon: 'run', category: 'running', tier: 'bronze',
+    check: (stats) => stats.runningDistance >= 10,
+  },
+  run_total_50km: {
+    id: 'run_total_50km', name: 'Road Regular', description: 'Run 50km total', icon: 'map-marker-distance', category: 'running', tier: 'bronze',
+    check: (stats) => stats.runningDistance >= 50,
+  },
+  run_total_100km: {
+    id: 'run_total_100km', name: 'Running Century', description: 'Run 100km total', icon: 'map-marker-distance', category: 'running', tier: 'silver',
+    check: (stats) => stats.runningDistance >= 100,
+  },
+  run_total_250km: {
+    id: 'run_total_250km', name: 'Distance Runner', description: 'Run 250km total', icon: 'compass-outline', category: 'running', tier: 'silver',
+    check: (stats) => stats.runningDistance >= 250,
+  },
+  run_total_500km: {
+    id: 'run_total_500km', name: 'Running Legend', description: 'Run 500km total', icon: 'star-outline', category: 'running', tier: 'gold',
+    check: (stats) => stats.runningDistance >= 500,
+  },
+  run_total_1000km: {
+    id: 'run_total_1000km', name: 'Thousand K Runner', description: 'Run 1000km total', icon: 'crown', category: 'running', tier: 'gold',
+    check: (stats) => stats.runningDistance >= 1000,
+  },
+  run_climb_50m: {
+    id: 'run_climb_50m', name: 'Hill Runner', description: 'Climb 50m on a run', icon: 'elevation-rise', category: 'running', tier: 'bronze',
+    check: (stats, activity) => activity && activity.type === 'running' && (activity.elevationGain || 0) >= 50,
+  },
+  run_climb_100m: {
+    id: 'run_climb_100m', name: 'Uphill Runner', description: 'Climb 100m on a run', icon: 'terrain', category: 'running', tier: 'silver',
+    check: (stats, activity) => activity && activity.type === 'running' && (activity.elevationGain || 0) >= 100,
+  },
+  run_climb_250m: {
+    id: 'run_climb_250m', name: 'Mountain Runner', description: 'Climb 250m on a run', icon: 'terrain', category: 'running', tier: 'gold',
+    check: (stats, activity) => activity && activity.type === 'running' && (activity.elevationGain || 0) >= 250,
+  },
+  run_total_elevation_500m: {
+    id: 'run_total_elevation_500m', name: 'Rising Runner', description: 'Gain 500m total elevation running', icon: 'elevation-rise', category: 'running', tier: 'silver',
+    check: (stats) => stats.runningElevation >= 500,
+  },
+  run_total_elevation_2000m: {
+    id: 'run_total_elevation_2000m', name: 'Summit Runner', description: 'Gain 2000m total elevation running', icon: 'terrain', category: 'running', tier: 'gold',
+    check: (stats) => stats.runningElevation >= 2000,
+  },
+  run_5_activities: {
+    id: 'run_5_activities', name: 'Regular Runner', description: 'Complete 5 runs', icon: 'run-fast', category: 'running', tier: 'bronze',
+    check: (stats) => stats.runningActivities >= 5,
+  },
+  run_20_activities: {
+    id: 'run_20_activities', name: 'Running Habit', description: 'Complete 20 runs', icon: 'run-fast', category: 'running', tier: 'silver',
+    check: (stats) => stats.runningActivities >= 20,
+  },
+  run_50_activities: {
+    id: 'run_50_activities', name: 'Seasoned Runner', description: 'Complete 50 runs', icon: 'medal-outline', category: 'running', tier: 'gold',
+    check: (stats) => stats.runningActivities >= 50,
+  },
+  run_100_activities: {
+    id: 'run_100_activities', name: 'Century Runner', description: 'Complete 100 runs', icon: 'medal', category: 'running', tier: 'gold',
+    check: (stats) => stats.runningActivities >= 100,
   },
   
   // --- MOUNTAIN BIKING ACHIEVEMENTS ---
@@ -742,44 +844,32 @@ export const LANDMARKS = [
 ];
 
 // Challenge templates
-const CHALLENGE_TEMPLATES = [
-  { id: 'daily_distance', type: 'distance', period: 'daily', targets: [2, 3, 5], unit: 'km', description: 'Walk/bike {target}km today' },
+export const CHALLENGE_TEMPLATES = [
+  { id: 'daily_distance', type: 'distance', period: 'daily', targets: [2, 3, 5], unit: 'km', description: 'Walk/run/ride {target}km today' },
   { id: 'weekly_distance', type: 'distance', period: 'weekly', targets: [10, 15, 20, 25], unit: 'km', description: 'Travel {target}km this week' },
   { id: 'daily_activity', type: 'count', period: 'daily', targets: [1], unit: 'activities', description: 'Complete an activity today' },
   { id: 'weekly_activities', type: 'count', period: 'weekly', targets: [3, 4, 5], unit: 'activities', description: 'Complete {target} activities this week' },
   { id: 'streak', type: 'streak', period: 'weekly', targets: [3, 5, 7], unit: 'days', description: 'Keep a {target}-day streak going' },
   { id: 'long_activity', type: 'single_distance', period: 'weekly', targets: [3, 5, 7], unit: 'km', description: 'Complete a single {target}km+ activity' },
   { id: 'duration', type: 'duration', period: 'weekly', targets: [30, 45, 60], unit: 'mins', description: 'Be active for {target} minutes in one go' },
+  { id: 'daily_run_distance', type: 'distance', activityType: 'running', period: 'daily', targets: [1, 3, 5], unit: 'km', description: 'Run {target}km today' },
+  { id: 'weekly_run_distance', type: 'distance', activityType: 'running', period: 'weekly', targets: [5, 10, 15, 20], unit: 'km', description: 'Run {target}km this week' },
+  { id: 'weekly_run_count', type: 'count', activityType: 'running', period: 'weekly', targets: [2, 3, 5], unit: 'runs', description: 'Complete {target} runs this week' },
+  { id: 'single_run_distance', type: 'single_distance', activityType: 'running', period: 'weekly', targets: [3, 5, 10], unit: 'km', description: 'Complete a single {target}km+ run' },
+  { id: 'single_run_duration', type: 'duration', activityType: 'running', period: 'weekly', targets: [20, 30, 45, 60], unit: 'mins', description: 'Run for {target} minutes in one go' },
 ];
 
 // Default gamification state
 const defaultGamification = {
   xp: 0,
+  // Null marks legacy state where challenge XP was not tracked separately.
+  challengeXp: null,
   level: 1,
   unlockedAchievements: [],
   newAchievements: [], // achievements unlocked but not yet seen
   challenges: [],
   lastChallengeGeneration: null,
-  stats: {
-    totalDistance: 0,
-    totalActivities: 0,
-    totalElevation: 0,
-    // Separate walking stats
-    walkingActivities: 0,
-    walkingDistance: 0,
-    walkingElevation: 0,
-    // Separate biking stats  
-    bikingActivities: 0,
-    bikingDistance: 0,
-    bikingElevation: 0,
-    bikingDescent: 0,
-    // Streaks
-    currentStreak: 0,
-    longestStreak: 0,
-    lastActivityDate: null,
-    hasWeekendPair: false,
-    weekendDays: [],
-  },
+  stats: { ...DEFAULT_GAMIFICATION_STATS },
 };
 
 // Load gamification data
@@ -787,12 +877,29 @@ export const loadGamification = async () => {
   try {
     const data = await AsyncStorage.getItem(GAMIFICATION_KEY);
     if (data) {
-      return { ...defaultGamification, ...JSON.parse(data) };
+      const parsed = JSON.parse(data);
+      let challengeXp = parsed.challengeXp;
+      if (!Number.isFinite(challengeXp)) {
+        const rewardData = await AsyncStorage.getItem(CHALLENGE_REWARDS_KEY);
+        const selectedRewardXp = rewardData
+          ? JSON.parse(rewardData).reduce((sum, reward) => sum + (reward.xp || 0), 0)
+          : 0;
+        const automaticRewardXp = (parsed.challenges || [])
+          .filter(challenge => challenge.rewarded)
+          .reduce((sum) => sum + 25, 0);
+        challengeXp = selectedRewardXp + automaticRewardXp;
+      }
+      return {
+        ...defaultGamification,
+        ...parsed,
+        challengeXp,
+        stats: mergeGamificationStats(parsed.stats),
+      };
     }
   } catch (e) {
     console.log('Error loading gamification:', e);
   }
-  return defaultGamification;
+  return { ...defaultGamification, stats: { ...defaultGamification.stats } };
 };
 
 // Save gamification data
@@ -957,32 +1064,26 @@ export const checkWeekendPair = (activities) => {
 };
 
 // Generate challenges
-export const generateChallenges = (currentStats) => {
+export const generateChallenges = (currentStats, activities = [], selectedChallenge = null, autoChallenges = []) => {
   const challenges = [];
   const now = new Date();
-  
-  // Pick 3 random challenge templates
-  const shuffled = [...CHALLENGE_TEMPLATES].sort(() => Math.random() - 0.5);
-  const selected = shuffled.slice(0, 3);
-  
-  selected.forEach((template, index) => {
-    const target = template.targets[Math.floor(Math.random() * template.targets.length)];
-    const description = template.description.replace('{target}', target);
+  const offerable = getOfferableChallenges(activities, selectedChallenge, autoChallenges, currentStats?.currentStreak || 0);
+  const selected = [...offerable].sort(() => Math.random() - 0.5).slice(0, 3);
+
+  selected.forEach((offer, index) => {
+    const periodStart = getPeriodStart(offer.period, now);
+    const expiresAt = offer.period === 'daily'
+      ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      : new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + 7);
     
     challenges.push({
-      id: `${template.id}_${now.getTime()}_${index}`,
-      templateId: template.id,
-      type: template.type,
-      period: template.period,
-      target,
-      unit: template.unit,
-      description,
+      id: `${offer.templateId}_${now.getTime()}_${index}`,
+      ...offer,
       progress: 0,
       completed: false,
       createdAt: now.toISOString(),
-      expiresAt: template.period === 'daily' 
-        ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
-        : new Date(now.getFullYear(), now.getMonth(), now.getDate() + (7 - now.getDay())).toISOString(),
+      periodStart: periodStart.toISOString(),
+      expiresAt: expiresAt.toISOString(),
     });
   });
   
@@ -1002,33 +1103,16 @@ export const updateChallengeProgress = (challenges, activities, currentStreak) =
     }
     
     // Filter activities for this challenge period
-    const periodStart = challenge.period === 'daily'
+    // Existing weekly challenges without periodStart retain their legacy Sunday window.
+    const legacyPeriodStart = challenge.period === 'daily'
       ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
       : new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
-    
-    const periodActivities = activities.filter(a => 
-      new Date(a.timestamp) >= periodStart
+    const periodStart = challenge.periodStart || legacyPeriodStart;
+    const progress = calculateChallengeProgress(
+      { ...challenge, startAt: periodStart },
+      activities,
+      currentStreak
     );
-    
-    let progress = 0;
-    
-    switch (challenge.type) {
-      case 'distance':
-        progress = periodActivities.reduce((sum, a) => sum + a.distance, 0);
-        break;
-      case 'count':
-        progress = periodActivities.length;
-        break;
-      case 'streak':
-        progress = currentStreak;
-        break;
-      case 'single_distance':
-        progress = Math.max(...periodActivities.map(a => a.distance), 0);
-        break;
-      case 'duration':
-        progress = Math.max(...periodActivities.map(a => a.duration / 60), 0);
-        break;
-    }
     
     const completed = progress >= challenge.target;
     
@@ -1056,6 +1140,7 @@ export const getChallengeTemplates = () => {
     targets: template.targets,
     unit: template.unit,
     description: template.description,
+    activityType: template.activityType,
   }));
 };
 
@@ -1078,6 +1163,7 @@ export const selectChallenge = async (templateId, target) => {
     period: template.period,
     target,
     unit: template.unit,
+    activityType: template.activityType,
     bonusXp,
     selectedAt: new Date().toISOString(),
     baseline: { distance: 0, duration: 0, elevation: 0, activityCount: 0 },
@@ -1113,34 +1199,11 @@ export const getSelectedChallengeProgress = (selectedChallenge, activities, curr
   const selectedAt = new Date(selectedChallenge.selectedAt);
   
   // Filter activities since selection point
-  const relevantActivities = activities.filter(a => {
-    const activityDate = new Date(a.date || a.timestamp || 0);
-    return activityDate >= selectedAt;
-  });
-  
-  let progress = 0;
-  
-  switch (selectedChallenge.type) {
-    case 'distance':
-      progress = relevantActivities.reduce((sum, a) => sum + (a.distance || 0), 0);
-      break;
-    case 'count':
-      progress = relevantActivities.length;
-      break;
-    case 'streak':
-      progress = currentStreak || 0;
-      break;
-    case 'single_distance':
-      progress = relevantActivities.length > 0
-        ? Math.max(...relevantActivities.map(a => a.distance || 0))
-        : 0;
-      break;
-    case 'duration':
-      progress = relevantActivities.length > 0
-        ? Math.max(...relevantActivities.map(a => (a.duration || 0) / 60))
-        : 0;
-      break;
-  }
+  const progress = calculateChallengeProgress(
+    { ...selectedChallenge, startAt: selectedAt },
+    activities,
+    currentStreak
+  );
   
   const completed = progress >= selectedChallenge.target;
   return {
@@ -1178,37 +1241,8 @@ export const isChallengeInFlight = (templateId, target, selectedChallenge, autoC
 // (used for offer filtering only -- NOT for selected challenge progress)
 export const getChallengeOfferProgress = (template, target, activities, currentStreak) => {
   const now = new Date();
-  const periodStart = template.period === 'daily'
-    ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    : new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
-  
-  const periodActivities = activities.filter(a =>
-    new Date(a.date || a.timestamp || 0) >= periodStart
-  );
-  
-  let progress = 0;
-  switch (template.type) {
-    case 'distance':
-      progress = periodActivities.reduce((sum, a) => sum + (a.distance || 0), 0);
-      break;
-    case 'count':
-      progress = periodActivities.length;
-      break;
-    case 'streak':
-      progress = currentStreak || 0;
-      break;
-    case 'single_distance':
-      progress = periodActivities.length > 0
-        ? Math.max(...periodActivities.map(a => a.distance || 0))
-        : 0;
-      break;
-    case 'duration':
-      progress = periodActivities.length > 0
-        ? Math.max(...periodActivities.map(a => (a.duration || 0) / 60))
-        : 0;
-      break;
-  }
-  return progress;
+  const periodStart = getPeriodStart(template.period, now);
+  return calculateChallengeProgress({ ...template, target, startAt: periodStart }, activities, currentStreak);
 };
 
 // Check if a challenge is already achieved under its own rule window
@@ -1243,6 +1277,7 @@ export const getOfferableChallenges = (activities, selectedChallenge, autoChalle
         target,
         unit: template.unit,
         description: template.description.replace('{target}', target),
+        activityType: template.activityType,
         bonusXp,
       });
     }
@@ -1281,6 +1316,7 @@ export const awardSelectedChallengeBonus = async (gamification, selectedChalleng
   
   // Award bonus XP
   gamification.xp += selectedChallenge.bonusXp;
+  gamification.challengeXp = (gamification.challengeXp || 0) + selectedChallenge.bonusXp;
   
   // Add to reward ledger
   const reward = {
@@ -1330,20 +1366,7 @@ export const processActivity = async (activity, allActivities) => {
   }
   
   // Update stats
-  gamification.stats.totalDistance += activity.distance;
-  gamification.stats.totalActivities += 1;
-  gamification.stats.totalElevation += (activity.elevationGain || 0);
-  
-  if (activity.type === 'walking') {
-    gamification.stats.walkingActivities += 1;
-    gamification.stats.walkingDistance = (gamification.stats.walkingDistance || 0) + activity.distance;
-    gamification.stats.walkingElevation = (gamification.stats.walkingElevation || 0) + (activity.elevationGain || 0);
-  } else {
-    gamification.stats.bikingActivities += 1;
-    gamification.stats.bikingDistance = (gamification.stats.bikingDistance || 0) + activity.distance;
-    gamification.stats.bikingElevation = (gamification.stats.bikingElevation || 0) + (activity.elevationGain || 0);
-    gamification.stats.bikingDescent = (gamification.stats.bikingDescent || 0) + (activity.elevationLoss || 0);
-  }
+  gamification.stats = addActivityToStats(gamification.stats, activity);
   
   // Update streak
   gamification.stats.currentStreak = calculateStreak(allActivities, activity.timestamp);
@@ -1386,6 +1409,7 @@ export const processActivity = async (activity, allActivities) => {
     gamification.challenges = gamification.challenges.map(c => {
       if (c.completed && !c.rewarded) {
         gamification.xp += 25;
+        gamification.challengeXp = (gamification.challengeXp || 0) + 25;
         results.xpEarned += 25;
         return { ...c, rewarded: true };
       }
@@ -1424,7 +1448,7 @@ export const processActivity = async (activity, allActivities) => {
   if (selectedChallenge && !selectedChallenge.bonusXpAwarded) {
     const progressData = getSelectedChallengeProgress(selectedChallenge, allActivities, gamification.stats.currentStreak);
     if (progressData.completed) {
-      const awardResult = await awardSelectedChallengeBonus(gamification, selectedChallenge);
+      const awardResult = await awardSelectedChallengeBonus(gamification, progressData);
       if (awardResult.awarded) {
         gamification = awardResult.gamification;
         results.xpEarned += awardResult.bonusXp;
@@ -1468,12 +1492,27 @@ export const recalculateGamification = async (activities, cutoffDate = null) => 
     ? activities.filter(a => new Date(a.timestamp) >= cutoffDate)
     : activities;
   
-  // Start fresh
-  const gamification = { ...defaultGamification };
+  // Preserve challenge state and reward accounting while rebuilding activity-derived data.
+  const existingGamification = await loadGamification();
+  const challengeRewards = await getChallengeRewards();
+  const gamification = {
+    ...defaultGamification,
+    challenges: existingGamification.challenges || [],
+    lastChallengeGeneration: existingGamification.lastChallengeGeneration || null,
+  };
   gamification.stats = { ...defaultGamification.stats };
   gamification.unlockedAchievements = [];
   gamification.newAchievements = [];
-  gamification.xp = 0;
+  const selectedChallengeXp = challengeRewards.reduce((sum, reward) => sum + (reward.xp || 0), 0);
+  const automaticChallengeXp = gamification.challenges
+    .filter(challenge => challenge.rewarded)
+    .reduce((sum) => sum + 25, 0);
+  // New states keep an explicit total so rewards survive after completed challenge cards age out.
+  // Legacy states can preserve rewards that still have ledger/card evidence.
+  gamification.challengeXp = Number.isFinite(existingGamification.challengeXp)
+    ? existingGamification.challengeXp
+    : selectedChallengeXp + automaticChallengeXp;
+  gamification.xp = gamification.challengeXp;
   
   // Sort activities by timestamp
   const sortedActivities = [...activitiesForStats].sort((a, b) => 
@@ -1485,21 +1524,7 @@ export const recalculateGamification = async (activities, cutoffDate = null) => 
     // Calculate XP for this activity
     gamification.xp += calculateXP(activity);
     
-    // Update stats
-    gamification.stats.totalDistance += activity.distance || 0;
-    gamification.stats.totalActivities += 1;
-    gamification.stats.totalElevation += (activity.elevationGain || 0);
-    
-    if (activity.type === 'walking') {
-      gamification.stats.walkingActivities += 1;
-      gamification.stats.walkingDistance = (gamification.stats.walkingDistance || 0) + (activity.distance || 0);
-      gamification.stats.walkingElevation = (gamification.stats.walkingElevation || 0) + (activity.elevationGain || 0);
-    } else {
-      gamification.stats.bikingActivities += 1;
-      gamification.stats.bikingDistance = (gamification.stats.bikingDistance || 0) + (activity.distance || 0);
-      gamification.stats.bikingElevation = (gamification.stats.bikingElevation || 0) + (activity.elevationGain || 0);
-      gamification.stats.bikingDescent = (gamification.stats.bikingDescent || 0) + (activity.elevationLoss || 0);
-    }
+    gamification.stats = addActivityToStats(gamification.stats, activity);
     
     gamification.stats.lastActivityDate = activity.timestamp;
   }
@@ -1510,7 +1535,10 @@ export const recalculateGamification = async (activities, cutoffDate = null) => 
   
   // Calculate current streak
   gamification.stats.currentStreak = calculateStreak(activitiesForStats, new Date().toISOString());
-  gamification.stats.longestStreak = Math.max(gamification.stats.currentStreak, gamification.stats.longestStreak);
+  gamification.stats.longestStreak = Math.max(
+    gamification.stats.currentStreak,
+    existingGamification.stats?.longestStreak || 0
+  );
   
   // Check weekend pair
   gamification.stats.hasWeekendPair = checkWeekendPair(activitiesForStats);
@@ -1521,7 +1549,7 @@ export const recalculateGamification = async (activities, cutoffDate = null) => 
     let unlocked = false;
     
     // Categories that need to check against individual activities
-    const singleActivityCategories = ['walking', 'biking', 'general'];
+    const singleActivityCategories = ['walking', 'running', 'biking', 'general'];
     
     if (singleActivityCategories.includes(achievement.category)) {
       // Check against cumulative stats first (for total distance/count achievements)
@@ -1556,6 +1584,36 @@ export const recalculateGamification = async (activities, cutoffDate = null) => 
       activitiesForStats,
       gamification.stats.currentStreak
     );
+    gamification.challenges = gamification.challenges.map(challenge => {
+      if (challenge.completed && !challenge.rewarded) {
+        gamification.challengeXp += 25;
+        gamification.xp += 25;
+        return { ...challenge, rewarded: true };
+      }
+      return challenge;
+    });
+  }
+
+  // Keep the selected challenge identity and selection-time boundary, but refresh progress.
+  const selectedChallenge = await getSelectedChallenge();
+  if (selectedChallenge) {
+    let updatedSelected = getSelectedChallengeProgress(
+      selectedChallenge,
+      activitiesForStats,
+      gamification.stats.currentStreak
+    );
+    const recordedReward = challengeRewards.find(reward =>
+      reward.challengeId === selectedChallenge.templateId &&
+      reward.selectedAt === selectedChallenge.selectedAt
+    );
+    if (recordedReward) {
+      updatedSelected = { ...updatedSelected, completed: true, bonusXpAwarded: true };
+      await AsyncStorage.setItem(SELECTED_CHALLENGE_KEY, JSON.stringify(updatedSelected));
+    } else if (updatedSelected.completed && !updatedSelected.bonusXpAwarded) {
+      await awardSelectedChallengeBonus(gamification, updatedSelected);
+    } else {
+      await AsyncStorage.setItem(SELECTED_CHALLENGE_KEY, JSON.stringify(updatedSelected));
+    }
   }
   
   // Save the recalculated gamification

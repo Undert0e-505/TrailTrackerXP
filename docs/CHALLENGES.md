@@ -1,141 +1,69 @@
 # Challenge System
 
-## Current Architecture (pre-selectable-challenges)
+TrailTrackerXP provides automatic challenges and one user-selected challenge. Both use the
+canonical activity types `walking`, `running` and `biking`.
 
-### Challenge Definitions
+## Templates
 
-Challenge templates are defined in `utils/gamification.js`:
+Templates live in `utils/gamification.js`. Generic templates count walks, runs and rides. Running
+templates set `activityType: 'running'`, which filters every progress path to runs only:
 
-```js
-const CHALLENGE_TEMPLATES = [
-  { id: 'daily_distance',   type: 'distance',        period: 'daily',  targets: [2, 3, 5],           unit: 'km',         description: 'Walk/bike {target}km today' },
-  { id: 'weekly_distance',  type: 'distance',        period: 'weekly', targets: [10, 15, 20, 25],    unit: 'km',         description: 'Travel {target}km this week' },
-  { id: 'daily_activity',   type: 'count',           period: 'daily',  targets: [1],                  unit: 'activities', description: 'Complete an activity today' },
-  { id: 'weekly_activities',type: 'count',           period: 'weekly', targets: [3, 4, 5],            unit: 'activities', description: 'Complete {target} activities this week' },
-  { id: 'streak',           type: 'streak',          period: 'weekly', targets: [3, 5, 7],            unit: 'days',       description: 'Keep a {target}-day streak going' },
-  { id: 'long_activity',    type: 'single_distance', period: 'weekly', targets: [3, 5, 7],            unit: 'km',         description: 'Complete a single {target}km+ activity' },
-  { id: 'duration',         type: 'duration',        period: 'weekly', targets: [30, 45, 60],         unit: 'mins',       description: 'Be active for {target} minutes in one go' },
-];
-```
+| Template | Period | Targets |
+|---|---|---|
+| Daily run distance | Daily | 1, 3, 5 km |
+| Weekly run distance | Weekly | 5, 10, 15, 20 km |
+| Weekly run count | Weekly | 2, 3, 5 runs |
+| Single run distance | Weekly | 3, 5, 10 km |
+| Single run duration | Weekly | 20, 30, 45, 60 minutes |
 
-### Random Challenge Generation
+Templates without `activityType` remain backward-compatible and count every activity type.
 
-`generateChallenges(currentStats)` picks 3 random templates, selects a random target from each template's `targets` array, and creates challenge objects with:
-- `id`: `{templateId}_{timestamp}_{index}`
-- `createdAt`, `expiresAt` (daily = end of today, weekly = end of week)
-- `progress: 0`, `completed: false`
+## Time windows
 
-### When Challenges Are Generated
+- Daily challenges begin at local midnight and expire at the next local midnight.
+- Weekly challenges begin on Monday and expire the following Monday, matching Stats.
+- Existing active weekly challenges saved before the Monday-boundary change retain their legacy
+  Sunday window until they expire; newly generated challenges persist an explicit `periodStart`.
+- Selected challenges count only activities at or after their immutable `selectedAt` timestamp.
 
-In `processActivity()` (called on each new activity save):
-1. If no challenges exist, or all are completed/expired, or the day has changed since last generation â†’ generate new challenges.
-2. `lastChallengeGeneration` timestamp is stored in gamification state.
+## Generation and offers
 
-Also in `StatsScreen.js` `loadGamification()` (on screen focus):
-1. Same check â€” if challenges need regeneration, generate them.
-2. Progress is updated via `updateChallengeProgress()`.
+`getOfferableChallenges()` expands every template/target pair and removes:
 
-### Progress Calculation
+1. the same template and target when it is already an incomplete selected or automatic challenge;
+2. variants already completed in their current daily or weekly rule window.
 
-`updateChallengeProgress(challenges, activities, currentStreak)`:
-- Filters activities by challenge period (daily = today, weekly = this week).
-- For `distance`: sum all activity distances in period.
-- For `count`: count activities in period.
-- For `streak`: use current streak value.
-- For `single_distance`: max single activity distance in period.
-- For `duration`: max single activity duration in period.
-- Sets `completed = progress >= target`.
+`generateChallenges()` chooses up to three entries from that filtered pool. It receives current
+activities, the selected challenge, and existing automatic challenges so duplicate filtering is
+not bypassed.
 
-### XP and Rewards
+## Progress
 
-- Activity XP: 10 base + 10/km + 1/min + 1/10m elevation + bonuses for long activities.
-- Achievement XP: 50 per achievement, 500 for major achievements.
-- Challenge XP: 25 bonus per challenge completed (added in `processActivity`).
-- Challenge completion is marked with `rewarded: true` to prevent double-award.
-- XP is persisted in `gamification.xp` in AsyncStorage (`@trail_tracker_gamification`) and also saved to file (`/activities/gamification.json`).
+All automatic, selected, and offer-filtering paths share the same progress rules:
 
-### Recalculation
+- `distance`: sum distance;
+- `count`: count activities;
+- `streak`: use the current activity streak;
+- `single_distance`: use the longest matching activity;
+- `duration`: use the longest matching activity duration in minutes.
 
-`recalculateGamification(activities, cutoffDate)`:
-- Rebuilds XP from scratch by replaying all activities.
-- Re-checks all achievements.
-- Updates challenge progress.
-- Called when activities are deleted or modified.
+When `activityType` is present, non-matching activities are excluded before applying the rule.
 
-### Storage
+## Rewards and recalculation
 
-- **AsyncStorage**: `@trail_tracker_gamification` â€” primary store for gamification state (XP, level, achievements, challenges, stats, lastChallengeGeneration).
-- **File storage**: `/activities/gamification.json` â€” backup/file-based copy.
+- Automatic challenges award 25 XP once and persist `rewarded: true`.
+- Selected challenges award 50, 100 or 250 XP according to target difficulty.
+- Total challenge XP is stored separately so recalculating activity-derived XP does not discard
+  rewards after completed challenge cards expire from the display.
+- The selected-challenge reward ledger is keyed by template identity and `selectedAt`, preventing a
+  duplicate reward even if the activity history is recalculated.
+- Conversion and deletion rebuild activity XP, stats and achievements while preserving automatic
+  challenge history/rewards, the selected challenge identity and timestamp, and its reward ledger.
+  Active challenge progress is recalculated against the updated activity types.
 
-### StatsScreen Display
+## Storage
 
-- Challenges card on Stats overview tab.
-- Full challenges view on "challenges" tab (activeTab state).
-- Shows: description, progress/target, progress bar.
-- Completed challenges show âœ“ and "+25 XP earned".
-- Expired challenges show ? with reduced opacity.
-
-## Selectable Challenges (new feature)
-
-### Design
-
-- Users can manually select a challenge from the template pool.
-- Selected challenge progress starts from `selectedAt` timestamp (not retroactive).
-- Bonus XP awarded once on completion (50/100/250 by difficulty).
-- A reward ledger persists completed challenge rewards to prevent double-award.
-- Random challenges continue to work when no challenge is selected.
-
-### State Model
-
-```js
-selectedChallenge: {
-  templateId: "walk_5_miles",
-  description: "Walk 5 miles",
-  type: "distance",
-  target: 5,
-  unit: "km",
-  bonusXp: 100,
-  selectedAt: "2026-06-30T20:00:00.000Z",
-  baseline: { distance: 0, duration: 0, elevation: 0, activityCount: 0 },
-  completedAt: null,
-  bonusXpAwarded: false,
-}
-```
-
-### Reward Ledger
-
-```js
-challengeRewards: [
-  { challengeId: "walk_5_miles", awardedAt: "...", xp: 100, source: "selected_challenge" }
-]
-```
-## Challenge Offering Rules
-
-### Rule A — No duplicates of in-flight challenges
-
-Challenges offered to the user (both picker and auto-generation) are filtered to exclude any challenge currently in flight:
-- The manually selected challenge (if incomplete)
-- Any auto/random challenge that is active (not completed, not expired)
-
-Identity comparison: 	emplateId + target (same template with different targets may be offered as distinct stretch levels).
-
-### Rule B — No already-achieved challenges
-
-Challenges already met under their own rule window are excluded from offers. This checks current rule-window progress (daily/weekly), NOT selected-challenge progress (which starts from selectedAt).
-
-Example: If user has walked 30km this week, "walk 20km this week" is not offered. But "walk 50km this week" can still be offered.
-
-### Implementation
-
-- isChallengeInFlight(templateId, target, selectedChallenge, autoChallenges) — Rule A
-- getChallengeOfferProgress(template, target, activities, currentStreak) — calculates current rule-window progress
-- isChallengeAlreadyAchievedForOffer(template, target, activities, currentStreak) — Rule B
-- getOfferableChallenges(activities, selectedChallenge, autoChallenges, currentStreak) — returns filtered list
-
-generateChallenges() now uses the offerable pool for auto/random challenge generation.
-The challenge picker modal uses getOfferableChallenges() instead of raw templates.
-
-### Important distinction
-
-- **Selected challenge progress**: starts at selectedAt, not retroactive
-- **Offer filtering progress**: uses current rule window to avoid trivial already-complete challenges
+- Gamification state: `@trail_tracker_gamification`
+- Selected challenge: `@trail_tracker_selected_challenge`
+- Selected reward ledger: `@trail_tracker_challenge_rewards`
+- File backup: `documentDirectory/activities/gamification.json`

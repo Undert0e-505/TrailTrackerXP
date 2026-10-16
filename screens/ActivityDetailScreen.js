@@ -24,7 +24,8 @@ import {
   getElevationData,
   calculateMovingTime,
 } from '../utils/storage';
-import { WalkingIcon, BikingIcon, ElevationIcon, SpeedIcon } from '../components/Icons';
+import { ActivityTypeIcon, ElevationIcon, SpeedIcon } from '../components/Icons';
+import { ACTIVITY_TYPES, getActivityLabel, getActivityRouteColor, usesPace } from '../utils/activityTypes';
 
 // Convert icon
 const ConvertIcon = ({ size = 24, color = '#424242' }) => (
@@ -56,7 +57,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
   useEffect(() => {
     if (mapReady && activity && webViewRef.current) {
       const routeJson = JSON.stringify(activity.route);
-      const color = activity.type === 'walking' ? '#1976D2' : '#D32F2F';
+      const color = getActivityRouteColor(activity.type);
       webViewRef.current.injectJavaScript(`
         showActivity(${routeJson}, '${color}');
         setDarkMode(${isMapDark});
@@ -86,10 +87,10 @@ export default function ActivityDetailScreen({ route, navigation }) {
     }
   };
 
-  const handleConvertType = async () => {
+  const handleConvertType = async (newType) => {
+    if (newType === activity.type) return;
     setConverting(true);
     try {
-      const newType = activity.type === 'walking' ? 'biking' : 'walking';
       const updated = await updateActivity(activityId, { type: newType });
       setActivity(updated);
       setShowConvertModal(false);
@@ -97,7 +98,7 @@ export default function ActivityDetailScreen({ route, navigation }) {
       // Update map route color
       if (webViewRef.current) {
         const routeJson = JSON.stringify(updated.route);
-        const color = newType === 'walking' ? '#1976D2' : '#D32F2F';
+        const color = getActivityRouteColor(newType);
         webViewRef.current.injectJavaScript(`
           showActivity(${routeJson}, '${color}');
           true;
@@ -142,6 +143,11 @@ export default function ActivityDetailScreen({ route, navigation }) {
   const avgSpeedDisplay = distanceUnit === 'miles' ? avgSpeed * 0.621371 : avgSpeed;
   const maxSpeedDisplay = distanceUnit === 'miles' ? maxSpeed * 0.621371 : maxSpeed;
   const speedUnit = distanceUnit === 'miles' ? 'mph' : 'km/h';
+  const paceUnit = distanceUnit === 'miles' ? 'min/mi' : 'min/km';
+  const paceMultiplier = distanceUnit === 'miles' ? 0.621371 : 1;
+  const averagePace = avgSpeed > 0 ? 60 / (avgSpeed * paceMultiplier) : 0;
+  const bestPace = maxSpeed > 0 ? 60 / (maxSpeed * paceMultiplier) : 0;
+  const showPace = usesPace(activity.type);
   const elevUnit = 'm';
   const elevMultiplier = 1;
 
@@ -333,15 +339,11 @@ export default function ActivityDetailScreen({ route, navigation }) {
       {/* Activity Header */}
       <View style={[styles.header, { backgroundColor: theme.cardBg }]}>
         <View style={[styles.headerIcon, { backgroundColor: theme.primaryLight }]}>
-          {activity.type === 'walking' ? (
-            <WalkingIcon size={32} color={theme.primary} />
-          ) : (
-            <BikingIcon size={32} color={theme.primary} />
-          )}
+          <ActivityTypeIcon type={activity.type} size={32} color={getActivityRouteColor(activity.type)} />
         </View>
         <View style={styles.headerInfo}>
           <Text style={[styles.activityType, { color: theme.text }]}>
-            {activity.type === 'walking' ? 'Walking' : 'Biking'}
+            {getActivityLabel(activity.type)}
           </Text>
           <Text style={[styles.activityDate, { color: theme.textSecondary }]}>
             {formattedDate} at {formattedTime}
@@ -382,15 +384,15 @@ export default function ActivityDetailScreen({ route, navigation }) {
         <View style={styles.statsRow}>
           <View style={styles.stat}>
             <Text style={[styles.statValue, { color: theme.text }]}>
-              {avgSpeedDisplay.toFixed(1)} {speedUnit}
+              {showPace ? `${averagePace.toFixed(1)} ${paceUnit}` : `${avgSpeedDisplay.toFixed(1)} ${speedUnit}`}
             </Text>
-            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Avg Speed</Text>
+            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{showPace ? 'Avg Pace' : 'Avg Speed'}</Text>
           </View>
           <View style={styles.stat}>
             <Text style={[styles.statValue, { color: theme.text }]}>
-              {maxSpeedDisplay.toFixed(1)} {speedUnit}
+              {showPace ? `${bestPace.toFixed(1)} ${paceUnit}` : `${maxSpeedDisplay.toFixed(1)} ${speedUnit}`}
             </Text>
-            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Max Speed</Text>
+            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{showPace ? 'Best Pace' : 'Max Speed'}</Text>
           </View>
         </View>
       </View>
@@ -446,18 +448,30 @@ export default function ActivityDetailScreen({ route, navigation }) {
               Convert Activity?
             </Text>
             <Text style={[styles.modalMessage, { color: theme.textSecondary }]}>
-              Change from {activity.type === 'walking' ? 'Walking' : 'Biking'} to {activity.type === 'walking' ? 'Biking' : 'Walking'}?
-              {'\n\n'}This will recalculate your XP and achievements.
+              Choose a new type for this {getActivityLabel(activity.type).toLowerCase()}.
+              {'\n\n'}This updates its GPX file and recalculates stats, XP, achievements and challenges.
             </Text>
-            <TouchableOpacity
-              style={[styles.modalButton, { backgroundColor: theme.primary }]}
-              onPress={handleConvertType}
-              disabled={converting}
-            >
-              <Text style={styles.modalButtonText}>
-                {converting ? 'Converting...' : 'Convert'}
-              </Text>
-            </TouchableOpacity>
+            {ACTIVITY_TYPES.map(type => (
+              <TouchableOpacity
+                key={type.id}
+                accessibilityRole="button"
+                accessibilityLabel={type.id === activity.type ? `${type.label}, current type` : `Convert to ${type.label}`}
+                accessibilityState={{ disabled: converting || type.id === activity.type }}
+                style={[
+                  styles.modalButton,
+                  { backgroundColor: type.id === activity.type ? theme.surface : type.routeColor },
+                  type.id === activity.type && { opacity: 0.55 },
+                  { marginTop: 8 },
+                ]}
+                onPress={() => handleConvertType(type.id)}
+                disabled={converting || type.id === activity.type}
+              >
+                <Text style={[styles.modalButtonText, type.id === activity.type && { color: theme.textSecondary }]}>
+                  {type.label}{type.id === activity.type ? ' (current)' : ''}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {converting && <ActivityIndicator style={{ marginTop: 12 }} color={theme.primary} />}
             <TouchableOpacity
               style={[styles.modalCancelButton, { backgroundColor: theme.surface }]}
               onPress={() => setShowConvertModal(false)}

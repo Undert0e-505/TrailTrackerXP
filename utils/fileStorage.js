@@ -14,6 +14,13 @@
  */
 
 import * as FileSystem from 'expo-file-system';
+import {
+  ACTIVITY_TYPES,
+  IMPORT_TYPE_MAP,
+  fromImportedActivityType,
+  getDefaultActivityName,
+  toGPXActivityType,
+} from './activityTypes';
 
 // File paths
 const ACTIVITIES_DIR = `${FileSystem.documentDirectory}activities/`;
@@ -21,24 +28,10 @@ const EXPORT_DIR = `${FileSystem.documentDirectory}export/`;
 const GAMIFICATION_FILE = `${ACTIVITIES_DIR}gamification.json`;
 
 // TrailTrackerXP activity types mapping to GPX types
-export const ACTIVITY_TYPE_MAP = {
-  // TrailTrackerXP -> GPX type
-  walking: 'walking',
-  biking: 'cycling',
-  // GPX/Strava -> TrailTrackerXP (for import)
-  Walk: 'walking',
-  Run: 'walking',
-  Hike: 'walking',
-  walking: 'walking',
-  running: 'walking',
-  hiking: 'walking',
-  Ride: 'biking',
-  cycling: 'biking',
-  MountainBikeRide: 'biking',
-  GravelRide: 'biking',
-  EBikeRide: 'biking',
-  VirtualRide: 'biking',
-};
+export const INTERNAL_TO_GPX_TYPE = Object.fromEntries(
+  ACTIVITY_TYPES.map(type => [type.id, type.gpxType])
+);
+export const GPX_TO_INTERNAL_TYPE = IMPORT_TYPE_MAP;
 
 /**
  * Initialize the file storage directories
@@ -73,11 +66,11 @@ export const activityToGPX = (activity) => {
   const routeData = activity.routeData || activity.route || [];
   
   // Determine the name
-  const name = activity.name || 
-    `${activity.type === 'walking' ? 'Walk' : activity.type === 'biking' ? 'Ride' : 'Activity'} - ${new Date(activity.timestamp).toLocaleDateString()}`;
+  const name = activity.name ||
+    `${getDefaultActivityName(activity.type)} - ${new Date(activity.timestamp).toLocaleDateString()}`;
   
   // Determine GPX type
-  const gpxType = ACTIVITY_TYPE_MAP[activity.type] || 'walking';
+  const gpxType = toGPXActivityType(activity.type);
   
   // Get metadata time from first point or activity timestamp
   const metadataTime = routeData.length > 0 
@@ -337,13 +330,13 @@ export const loadActivityFromFile = async (activityId) => {
     }
     
     // Determine activity type
-    const type = ACTIVITY_TYPE_MAP[parsed.type] || 'walking';
+    const type = fromImportedActivityType(parsed.type, 'walking');
     
     // Create activity object
     const activity = {
       id: activityId,
       timestamp: parsed.metadataTime || new Date(startTime).toISOString(),
-      name: parsed.name || `Imported ${type === 'biking' ? 'Ride' : 'Walk'}`,
+      name: parsed.name || getDefaultActivityName(type, true),
       type: type,
       distance: distance,
       duration: duration,

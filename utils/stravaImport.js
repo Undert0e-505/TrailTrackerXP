@@ -14,24 +14,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { saveActivityToFile, saveGamificationToFile, loadActivitiesFromFile } from './fileStorage';
 import { recalculateGamification } from './gamification';
+import { fromImportedActivityType, getDefaultActivityName } from './activityTypes';
 
 const ACTIVITIES_KEY = '@trail_tracker_activities';
-
-// Strava activity type mapping
-const STRAVA_TYPE_MAP = {
-  'Ride': 'biking',
-  'cycling': 'biking',
-  'MountainBikeRide': 'biking',
-  'GravelRide': 'biking',
-  'EBikeRide': 'biking',
-  'VirtualRide': 'biking',
-  'Walk': 'walking',
-  'walking': 'walking',
-  'Run': 'walking',
-  'running': 'walking',
-  'Hike': 'walking',
-  'hiking': 'walking',
-};
 
 /**
  * Open file picker to select GPX files
@@ -297,7 +282,7 @@ export const parseActivitiesCSV = async (csvUri) => {
         stravaId: activityId,
         filename: gpxFilename,
         name: values[nameIndex] || `${activityType} Activity`,
-        type: STRAVA_TYPE_MAP[activityType] || 'walking',
+        type: fromImportedActivityType(activityType, 'walking'),
         stravaType: activityType,
         timestamp: timestamp,
         distance: parseFloat(values[distanceIndex]) / 1000 || 0, // Convert m to km
@@ -423,7 +408,7 @@ export const importGPXFromUri = async (fileUri, fileName, metadata = null) => {
     // Determine activity type
     let type = 'walking';
     if (parsed.type) {
-      type = STRAVA_TYPE_MAP[parsed.type] || 'walking';
+      type = fromImportedActivityType(parsed.type, 'walking');
     } else if (metadata?.type) {
       type = metadata.type;
     }
@@ -432,7 +417,7 @@ export const importGPXFromUri = async (fileUri, fileName, metadata = null) => {
     const activity = {
       id: metadata?.stravaId || fileName.replace('.gpx', '') || Date.now().toString(),
       timestamp: metadata?.timestamp || new Date(startTime).toISOString(),
-      name: metadata?.name || parsed.name || `Imported ${type === 'biking' ? 'Ride' : 'Walk'}`,
+      name: metadata?.name || parsed.name || getDefaultActivityName(type, true),
       type: type,
       distance: metadata?.distance || distance,
       duration: metadata?.duration || duration,

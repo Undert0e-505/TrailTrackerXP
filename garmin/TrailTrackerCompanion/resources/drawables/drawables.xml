@@ -1,5 +1,0 @@
-<drawables>
-    <bitmap id="LauncherIcon" filename="launcher_icon.png"/>
-    <bitmap id="WalkingIcon" filename="walking_icon.png"/>
-    <bitmap id="BikingIcon" filename="biking_icon.png"/>
-</drawables>

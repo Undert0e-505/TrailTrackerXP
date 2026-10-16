@@ -30,23 +30,21 @@ TrailTrackerXP/
 ├── screens/
 │   ├── TrackingScreen.js         # GPS tracking + live map (1800+ lines)
 │   ├── CalendarScreen.js         # Activity calendar
-│   ├── StatsScreen.js            # Walking/biking stats, charts, recent activities
+│   ├── StatsScreen.js            # Walking/running/biking stats, charts, recent activities
 │   ├── XPScreen.js              # XP, levels, achievements, challenges, streaks
 │   ├── ActivityDetailScreen.js   # Per-activity detail + route playback
-│   └── SettingsScreen.js         # Preferences, import/export, Garmin settings
+│   └── SettingsScreen.js         # Preferences and import/export
 ├── utils/
 │   ├── theme.js                  # Theme colours (dark-only TubePulse palette)
 │   ├── storage.js                # AsyncStorage CRUD, distance calc
+│   ├── activityTypes.js          # Canonical type labels, colours, GPX values, metric modes
 │   ├── fileStorage.js            # File-based GPX/JSON storage
 │   ├── gamification.js           # XP, levels, achievements, challenges
-│   ├── stravaImport.js           # GPX/CSV import
-│   └── garminBridge.js           # React Native ↔ Garmin watch bridge
+│   └── stravaImport.js           # GPX/CSV import
 ├── components/
 │   └── Icons.js                  # Custom SVG icon set (react-native-svg)
 ├── assets/                       # App icons, splash, notification icons
 │   └── fonts/                    # Inter font family
-├── garmin/
-│   └── TrailTrackerCompanion/    # Garmin Connect IQ app (Monkey C)
 └── docs/                         # Project documentation
 ```
 
@@ -63,7 +61,7 @@ The app uses a dual storage system:
 - Each activity saved as an individual GPX 1.1 file in `documentDirectory/activities/`
 - Gamification state in `documentDirectory/activities/gamification.json`
 - Export backups in `documentDirectory/export/`
-- GPX files are compatible with Strava, Garmin Connect, and other fitness apps
+- GPX files use the standard GPX 1.1 format for portable activity history
 
 ### Recovery
 If cache data is lost or corrupted:
@@ -77,7 +75,11 @@ If cache data is lost or corrupted:
 3. Settings → Data Storage → **Import from Strava**
 4. Select `.gpx` files from the export's `activities/` folder
 5. (Optional) Add `activities.csv` for better metadata
-6. Activities are classified as Walk/Ride based on GPX type
+6. Activities are classified as Walk/Run/Ride based on GPX type. Strava hikes remain walks.
+
+New Strava `Run`/`running` imports are stored as `running`. Older runs imported by versions that
+classified them as walks are not guessed or migrated automatically; open the saved activity and
+use the three-way conversion picker if needed.
 
 ## Path Overlay Feature (Walking Mode)
 
@@ -85,7 +87,7 @@ When activity type is Walking, the app can overlay OpenStreetMap tiles showing f
 
 - Tile source: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`
 - Uses `UrlTile` from react-native-maps
-- Only shown for walking (disabled for biking to reduce clutter)
+- Only shown for walking (disabled for running and biking to reduce clutter)
 - Free, no API key required, good UK footpath coverage
 
 ## Tech Stack
@@ -98,4 +100,3 @@ When activity type is Walking, the app can overlay OpenStreetMap tiles showing f
 | Storage | AsyncStorage + FileSystem (JSON + GPX) |
 | Charts | Custom SVG (react-native-svg) |
 | Fonts | Inter (@expo-google-fonts/inter) |
-| Garmin | Connect IQ / Monkey C |

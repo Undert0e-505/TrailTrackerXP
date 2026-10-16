@@ -44,9 +44,6 @@ logs/
 # Release archives (keep source, not binaries)
 releases/
 
-# Garmin build output
-garmin/*/bin/
-
 # Android icon pack source (mipmap densities for native builds)
 android-icons/
 
@@ -63,7 +60,6 @@ release.keystore
 android/app/release.keystore
 
 # Stale legacy docs (kept on disk, no longer tracked)
-GARMIN_SETUP_GUIDE.md
 docs/REPO_AUDIT_BEFORE_UI_MAKEOVER.md
 docs/UI_MAKEOVER_PLAN.md
 

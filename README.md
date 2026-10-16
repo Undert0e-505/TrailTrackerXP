@@ -1,122 +1,121 @@
 # TrailTrackerXP
 
-Dark Android GPS tracker for walking and biking, with GPX storage, stats, XP progression, achievements, and selectable challenges.
+**Track every walk, run and ride. Keep your GPX history. Build momentum without a subscription.**
 
-## Screenshots
+TrailTrackerXP is a focused, subscription-free Strava alternative for Android walkers, runners and cyclists.
+Record routes, review stats, import an existing Strava archive, and turn consistency into XP,
+achievements and challenges—all while keeping activity files on your device.
 
-<p float="left">
-  <img src="docs/images/tracking-screen.png" width="270" alt="Track screen" />
-  <img src="docs/images/calendar-screen.png" width="270" alt="Calendar screen" />
-  <img src="docs/images/xp-progress.png" width="270" alt="XP overview" />
-</p>
-<p float="left">
-  <img src="docs/images/xp-achievements.png" width="270" alt="Achievements" />
-  <img src="docs/images/xp-challenges.png" width="270" alt="Challenges" />
-  <img src="docs/images/stats-summary.png" width="270" alt="Stats summary" />
-</p>
-<p float="left">
-  <img src="docs/images/stats-distance.png" width="270" alt="Distance charts" />
-  <img src="docs/images/stats-pace.png" width="270" alt="Pace charts" />
-  <img src="docs/images/settings-screen.png" width="270" alt="Settings" />
-</p>
+[![Latest release](https://img.shields.io/github/v/release/Undert0e-505/TrailTrackerXP)](https://github.com/Undert0e-505/TrailTrackerXP/releases/latest)
+[![Android](https://img.shields.io/badge/platform-Android-3DDC84.svg)](https://github.com/Undert0e-505/TrailTrackerXP/releases/latest)
+[![React Native](https://img.shields.io/badge/React%20Native-Expo-61DAFB.svg)](https://expo.dev/)
 
-## Features
+[Download the latest release](https://github.com/Undert0e-505/TrailTrackerXP/releases/latest) ·
+[Development guide](docs/DEVELOPMENT.md) · [Build guide](docs/BUILD_AND_RELEASE.md)
 
-### Track
+## Your activity, at a glance
 
-- GPS route tracking with live map display
-- Walking and biking modes
-- Route preview before saving
-- Pause / resume / stop / save
-- Distance, duration, elevation, and pace metrics
-- Routes stored as GPX files on device
+| Run tracking | Calendar and route history | Journey and challenges |
+| :---: | :---: | :---: |
+| [<img src="docs/images/tracking-run.jpg" width="250" alt="TrailTrackerXP Track screen with Run selected between Walk and Bike, a live map, distance, duration, pace and elevation metrics, and the Start Tracking button">](docs/images/tracking-run.jpg) | [<img src="docs/images/calendar-history.jpg" width="250" alt="TrailTrackerXP Calendar for August 2026 with activity dots and two saved biking routes showing distance, duration and elevation">](docs/images/calendar-history.jpg) | [<img src="docs/images/xp-journey-challenges.jpg" width="250" alt="TrailTrackerXP XP screen showing journey distance milestones and progress on streak and activity challenges">](docs/images/xp-journey-challenges.jpg) |
 
-### Calendar
+## Record the route, not just the result
 
-- Activity history by date
-- Route thumbnails on the calendar grid
-- Tap any day to see activity details
-- Saved activity review with route playback
+Choose walking, running or biking, then follow the live route map while TrailTrackerXP measures distance,
+duration, elevation and pace. Pause and resume when needed, preview the route at the end, and save
+the activity as a GPX file. A foreground service keeps an active recording running in the
+background when Android grants the required location permissions.
 
-### XP
+Map styles include OpenStreetMap, OpenTopoMap and CyclOSM. TrailTrackerXP can cache supported map
+tiles and provides controls to inspect or clear that cache; tile availability still depends on the
+external providers and what has already been cached.
 
-- XP and levels with progression bar
-- Weekly streaks
-- Achievements with bronze / silver / gold tier colours
-- Auto / random daily and weekly challenges
-- Selectable challenges — pick your own goal
-- Bonus XP awarded on selected challenge completion
-- Challenge progress starts when you select it (historical activities don't retroactively complete challenges)
+## Make consistency rewarding
 
-### Stats
+Every saved activity contributes to a visible sense of progress rather than disappearing into a
+feed. Earn XP and levels, build weekly streaks, unlock bronze, silver and gold achievements, and
+work toward daily or weekly challenges. Automatic challenges provide a ready-made target, while
+selectable challenges let you choose the goal that suits you now.
 
-- Walking and biking progress side-by-side
-- Distance and pace views with a highlight selector
-- Daily, weekly, monthly, and all-time charts
-- Recent activities list (newest first)
+Selected challenge progress begins when you accept the challenge, so earlier activities do not
+retroactively complete it. The [challenge system guide](docs/CHALLENGES.md) explains the full rules.
 
-### Settings
+## Keep and understand your history
 
-- Miles / kilometres toggle
-- Stats cutoff date
-- GPX file storage (count, recover, export, import)
-- Strava GPX import
-- Map tile cache management
+Your saved activities live on the device as GPX files, supported by a local app cache. Browse them
+on a calendar, open activity details, and replay a route. Compare walking, running and cycling over daily,
+weekly, monthly and all-time views, with distance plus pace-or-speed charts that make longer-term
+changes easy to see.
 
-## Challenges and XP
+GPX export, import and recovery tools keep the underlying activity files within reach. If you are
+moving away from Strava, request your archive there and import its GPX activities into
+TrailTrackerXP rather than starting over.
 
-- **Auto challenges** are generated daily and weekly — walking, biking, streak, and activity-count goals.
-- **Selected challenges** let you pick from a filtered list of offerable challenges. Completing a selected challenge awards bonus XP.
-- Challenge offers avoid challenges you already have in flight, and challenges whose target you've already met in the current rule window.
-- Selected challenge progress starts from the time of selection, so historical activities don't retroactively complete a challenge.
-- Bonus XP is awarded once per challenge completion (persisted to prevent duplicates).
+| Walking progress | Local data control |
+| :---: | :---: |
+| [<img src="docs/images/walking-stats.jpg" width="310" alt="TrailTrackerXP Walking Progress screen with daily, weekly and monthly distance graphs and totals">](docs/images/walking-stats.jpg) | [<img src="docs/images/settings-gpx-import.jpg" width="320" alt="TrailTrackerXP Settings screen showing distance units, stats cutoff, local GPX file storage, GPX recovery and export, and Strava import">](docs/images/settings-gpx-import.jpg) |
 
-See [`docs/CHALLENGES.md`](docs/CHALLENGES.md) for the full challenge system design.
+Choose miles or kilometres, set a stats cutoff date, and manage local GPX files and the map cache
+from one place.
 
-## Build
+## Get started
 
-Local build only — no EAS cloud.
+1. Download the signed APK from the [latest release](https://github.com/Undert0e-505/TrailTrackerXP/releases/latest).
+2. Install it on an Android device and grant location access. Allow background location if you
+   want an activity to continue recording while TrailTrackerXP is not in the foreground.
+3. Choose **Walk**, **Run** or **Bike**, start tracking, and save the route when you finish.
+4. Explore the calendar, stats and XP screens—or import GPX activities from a Strava archive in
+   Settings.
+
+## Privacy and limitations
+
+- TrailTrackerXP is Android-only. It has no subscription or billing system; activity history and
+  app state are stored locally on the device.
+- Background recording requires location and background-location permission. Android device power
+  management can also affect foreground-service and location behavior.
+- Live maps and route detail views rely on external map tiles and Leaflet assets. Network access is
+  required when the needed resources are not already available in the cache, and cache coverage
+  varies by map style and area.
+- GPS accuracy, elevation readings and battery use depend on the device, signal conditions,
+  surroundings and recording duration.
+- Local storage means backup is your responsibility. Export or copy important GPX files before
+  replacing, resetting or uninstalling the app.
+- TrailTrackerXP is not affiliated with, endorsed by or sponsored by Strava. Strava is a trademark
+  of its respective owner.
+
+## Documentation
+
+- [Development guide](docs/DEVELOPMENT.md) — setup, project structure, data storage and Strava import
+- [Build and release guide](docs/BUILD_AND_RELEASE.md) — local builds, APK creation and signing
+- [Challenge system](docs/CHALLENGES.md) — challenge architecture, selection and completion rules
+- [Documentation index](docs/DOCS_INDEX.md) — all project documentation
+
+## Build and development
+
+TrailTrackerXP uses React Native with Expo SDK 51. Install Node.js/npm, JDK 21 and an Android SDK,
+then use the local Windows build script from the repository root:
 
 ```powershell
-# Preview build (debug-signed, JS bundled, no Metro needed — for phone QA)
-.\scripts\build-and-release.ps1 -PreviewBuild
+# Dev/debug APK for Metro development
+.\scripts\build-and-release.ps1 -DebugBuild
 
-# Release build (release-signed with release.keystore, minified)
-.\scripts\build-and-release.ps1 -ReleaseBuild
+# Release-signed, install-over candidate for physical-phone QA
+.\scripts\build-signed-local.ps1 -ReferenceApk C:\path\to\published.apk
+
+# Promote the exact candidate bytes after physical-device acceptance (no rebuild)
+.\scripts\build-and-release.ps1 -PromoteCandidate <tested-candidate.apk>
 ```
 
-- **Preview build:** standalone APK, signed with the debug key. Use for local phone QA.
-- **Release build:** signed with the release keystore, ProGuard minified. Use for public releases.
-- The `android/` directory is generated by `expo prebuild` and is not committed.
-- No EAS cloud build is needed — the local build script handles everything.
+Builds generate the uncommitted native Android project with Expo prebuild and place uniquely named
+APKs in the ignored `releases/` directory. Signed candidates are verified for package, version,
+signature and pinned release certificate before handoff; promotion copies the tested bytes without
+rebuilding. GitHub publication remains a separate, explicitly authorized maintainer action. See the
+[build guide](docs/BUILD_AND_RELEASE.md) for setup and the [signing guide](docs/SIGNING.md) for key
+safety.
 
-See [`docs/BUILD_AND_RELEASE.md`](docs/BUILD_AND_RELEASE.md) for full build documentation.
+The current app release is **v2.0.0**. Browse all builds on the
+[releases page](https://github.com/Undert0e-505/TrailTrackerXP/releases).
 
-## Releases
-
-Latest release: **v1.2.0**
-
-[Releases page](https://github.com/Undert0e-505/TrailTrackerXP/releases)
-
-## Development
-
-- [Development Guide](docs/DEVELOPMENT.md) — setup, project structure, data storage, Strava import
-- [Build & Release Guide](docs/BUILD_AND_RELEASE.md) — local build, APK creation, signing
-- [Challenges Design](docs/CHALLENGES.md) — challenge system architecture and rules
-- [Garmin Companion](docs/GARMIN_COMPANION.md) — Connect IQ watch app
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Framework | React Native + Expo (SDK 51) |
-| Navigation | React Navigation (bottom tabs + native stack) |
-| Maps | react-native-maps + WebView tile caching |
-| Storage | AsyncStorage + FileSystem (JSON + GPX) |
-| Charts | Custom SVG (react-native-svg) |
-| Fonts | Inter (@expo-google-fonts/inter) |
-| Garmin | Connect IQ / Monkey C |
-
-## License
+## Rights
 
 Private project. All rights reserved.

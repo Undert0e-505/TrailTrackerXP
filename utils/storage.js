@@ -229,7 +229,7 @@ export const updateActivity = async (id, updates) => {
     const gamificationData = await loadGamification();
     await saveGamificationToFile(gamificationData);
 
-    return activities[index];
+    return { ...activities[index], route: fullActivity.route || fullActivity.routeData || [] };
   } catch (error) {
     console.error('Error updating activity:', error);
     throw error;

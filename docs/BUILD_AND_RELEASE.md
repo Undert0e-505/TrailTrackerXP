@@ -1,114 +1,115 @@
-# Build & Release Guide
+# Build and release workflow
 
-## Local Builds (Primary)
+TrailTrackerXP builds locally on Windows. Phone acceptance uses a production-variant APK signed by
+the established release certificate; a debug APK cannot update an installed public release.
+Building, testing, local promotion and GitHub publication are deliberately separate steps.
 
-TrailTrackerXP uses **local builds** — no EAS cloud builds required. The build script handles everything: npm install, Expo prebuild, Gradle build, and APK output.
+## Prerequisites
 
-### Prerequisites
+- Node.js and npm
+- JDK 21 (`JAVA_HOME`, `C:\Program Files\Java\jdk-21`, or Android Studio's JBR)
+- Android SDK (`ANDROID_HOME`, `ANDROID_SDK_ROOT`, or `D:\dev\android-sdk`)
+- The protected local signer described in [Release signing](SIGNING.md), for signed builds only
 
-- **JDK 21** at `C:\Program Files\Java\jdk-21`
-- **Android SDK** at `D:\dev\android-sdk` (with build-tools, platform-tools)
-- **Node.js** + npm
+The scripts use a short local temporary directory and set the Java Unix-domain-socket temporary
+path for the build process. This avoids the Windows AF_UNIX/long-temporary-path Gradle failure
+without deleting Gradle caches. Release minification and resource shrinking remain disabled because
+they break background location tracking.
 
-### Build Modes
-
-| Mode | Command | JS Bundle | Metro Required | Use Case |
-|---|---|---|---|---|
-| **Preview** (default) | `.\scripts\build-and-release.ps1` | Bundled in APK | No | Phone QA, standalone testing |
-| Dev debug | `.\scripts\build-and-release.ps1 -DebugBuild` | Loaded from Metro | Yes | Live development |
-| Release | `.\scripts\build-and-release.ps1 -ReleaseBuild` | Bundled + minified | No | Public release |
-
-### Preview Build (Default — for phone QA)
-
-```powershell
-.\scripts\build-and-release.ps1
-# or explicitly:
-.\scripts\build-and-release.ps1 -PreviewBuild
-```
-
-Produces a standalone APK with JS bundled inside. **Does not require Metro.** Install on your phone and it runs independently. Uses `assembleRelease` with debug signing (configured by Expo prebuild).
-
-Output: `releases/TrailTrackerXP-v<version>-preview.apk`
-
-### Dev Debug Build (for live development)
+## Development debug build
 
 ```powershell
 .\scripts\build-and-release.ps1 -DebugBuild
 ```
 
-Produces a debug APK that loads JS from Metro at runtime. **Requires Metro running** (`npx expo start`). If you install this on a phone without Metro, you'll see a red screen: "Unable to load script. Make sure you're either running Metro or that your bundle index.android.bundle is packaged correctly for release." — this is expected behaviour for dev debug builds.
+This produces a uniquely named APK under `releases/debug/`. It uses debug signing and loads its
+JavaScript from Metro (`npx expo start`), so it is for development/emulator use only. It cannot be
+installed over the public release-signed app.
 
-Output: `releases/TrailTrackerXP-v<version>-dev-debug.apk`
+## Release-signed phone candidate
 
-### Release Build (for public release)
-
-```powershell
-# Set signing passwords first (env vars, not hardcoded in the script):
-$env:TRAILTRACKER_STORE_PASSWORD = "<your-store-password>"
-$env:TRAILTRACKER_KEY_PASSWORD = "<your-key-password>"
-
-.\scripts\build-and-release.ps1 -ReleaseBuild
-```
-
-Produces a signed, minified release APK. Use only when cutting a public release.
-Requires `TRAILTRACKER_STORE_PASSWORD` and `TRAILTRACKER_KEY_PASSWORD` environment variables.
-
-Output: `releases/TrailTrackerXP-v<version>.apk`
-
-### Additional Options
+Initialize this Windows user's protected signer once from the existing Windows Generic Credentials
+(never create a replacement key):
 
 ```powershell
-# Bump version before building
-.\scripts\build-and-release.ps1 -Version 1.1.0
-
-# Clean build (nukes gradle cache + generated android/ project)
-.\scripts\build-and-release.ps1 -Clean
-
-# Combine options
-.\scripts\build-and-release.ps1 -Clean -PreviewBuild -Version 1.1.0
+.\scripts\initialize-local-signing.ps1 -FromCredentialManager
 ```
 
-### What the Script Does
-
-1. Optionally bumps version in `app.json` (if `-Version` is passed)
-2. `npm install` — ensures dependencies
-3. `npx expo prebuild --platform android` — generates `android/` if missing
-4. `gradlew.bat assembleDebug` / `assembleRelease` (based on mode)
-5. (Release only) Signs APK with `apksigner`
-6. Copies APK to `releases/`
-
-### Installing on Phone
+Then preview and build the signed candidate:
 
 ```powershell
-# Via ADB (if phone connected via USB)
-adb install -r releases\TrailTrackerXP-v1.0.5-preview.apk
-
-# Or copy the APK to your phone and install manually
-# (enable "Install from Unknown Sources" in Android settings)
+.\scripts\build-signed-local.ps1 -WhatIf
+.\scripts\build-signed-local.ps1 -ReferenceApk C:\path\to\published-v1.3.1.apk
 ```
 
-If you get a signature mismatch error when installing, the previous APK was signed with a different key. Uninstall the old app first (this will delete local app data) or use `-r` to replace.
+The helper decrypts the DPAPI-protected passphrase only in the current process, validates the
+keystore against the pinned public certificate, runs the repository test suite, injects signing
+variables for the build, and restores them afterward. The default production-variant candidate is
+standalone (Metro is not required), preserves `app.json` versionName/versionCode, and is written
+without overwrite to:
 
-## Generated Files
+`releases/candidates/TrailTrackerXP-v<version>-vc<code>-candidate-<UTC timestamp>.apk`
 
-The following are generated by the build and should **not** be committed:
+Every candidate is checked for package `com.trailtrackerxp.app`, app version, APK Signature Scheme
+v2, exactly one signer, pinned signer fingerprint, byte size and SHA-256. Supplying `-ReferenceApk`
+also prevents a lower versionCode than the published/reference APK. For v1.3.1 the established
+versionCode is 7.
 
-- `android/` — generated by `expo prebuild` (gitignored)
-- `releases/` — APK output directory (gitignored)
-- `android-icons/` — mipmap source for native builds (gitignored)
+`-PreviewBuild` and `-ReleaseBuild` remain compatibility aliases for `-CandidateBuild` in the core
+script. They do not publish or create the canonical release artifact. Private local signing should
+normally go through `build-signed-local.ps1`.
 
-## Cloud EAS Builds (Not Used)
+## Verify and test the exact candidate
 
-Cloud EAS builds are **not the normal path** for TrailTrackerXP. The local script is the recommended and tested approach.
+```powershell
+.\scripts\build-signed-local.ps1 -VerifyOnly `
+  -CandidatePath .\releases\candidates\TrailTrackerXP-v2.0.0-vc8-candidate-<timestamp>.apk `
+  -ReferenceApk C:\path\to\published-v1.3.1.apk
+```
+
+On the physical phone, install with `adb install -r <candidate.apk>` or open the APK directly. Do
+not uninstall the current app merely to bypass a signature/version failure: uninstalling deletes
+TrailTrackerXP's on-device activity data. Confirm the update preserves existing data, then exercise
+background recording, pause/resume/save, maps, Calendar/Stats refresh, GPX import/export, running
+conversion, XP/achievements and challenges.
+
+Record the tested candidate's path, size and SHA-256. The candidate that passes phone acceptance is
+the only file that should move to promotion.
+
+## Promote the exact tested bytes
+
+```powershell
+.\scripts\build-and-release.ps1 `
+  -PromoteCandidate .\releases\candidates\TrailTrackerXP-v2.0.0-vc8-candidate-<timestamp>.apk `
+  -ReferenceApk C:\path\to\published-v1.3.1.apk
+```
+
+Promotion performs the same package/version/signature/certificate checks, computes SHA-256, and
+copies those exact bytes to `releases/TrailTrackerXP-v<version>.apk`. It does **not** rebuild. It
+refuses to overwrite an existing canonical artifact and verifies size/hash equality after copying.
+For a non-publishing promotion-path check, `-PromotionOutput <unique-relative-path>` selects a
+different non-existing destination; all validation and no-overwrite rules remain active.
+
+Promotion is local preparation only. Publishing to GitHub is a distinct maintainer action requiring
+explicit authorization, final source review, commit/tag/push decisions, release notes, and upload of
+the already validated canonical APK. These scripts never tag, push, or publish.
+
+## Version and generated-file safety
+
+Version name and Android versionCode live in `app.json` and must be reviewed deliberately. The
+build script refuses its legacy `-Version` mutation parameter. Generated `android/` and APK output
+under `releases/` are ignored and must not be committed. Signing material stays outside the
+repository and shared drive.
+
+`-Clean` runs Gradle's project clean only. It does not delete the generated Android project or broad
+caches. The Expo-generated release configuration is changed only to reference process-scoped signer
+variables; no password is written into generated Gradle files.
 
 ## Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| `JDK not found` | Install JDK 21 at the expected path |
-| `Android SDK not found` | Install Android SDK at `D:\dev\android-sdk` |
-| `gradlew.bat not found` | The script will run `expo prebuild` automatically |
-| `npm install failed` | Try `Remove-Item node_modules -Recurse -Force; npm install` |
-| Build fails after Expo update | Run with `-Clean` to regenerate the native project |
-| Red "Unable to load script" screen | You installed a dev debug APK without Metro. Use `-PreviewBuild` instead |
-| `apksigner not found` | Install Android build-tools via SDK Manager |
+- Missing signer: run `initialize-local-signing.ps1 -FromCredentialManager` with the established
+  keystore and current-user credentials. Never generate a substitute key for an existing app.
+- Signature mismatch: verify the pinned fingerprint and use the established release signer.
+- Version downgrade: compare against the published/reference APK and update `app.json` deliberately.
+- Debug red screen: start Metro, or install a release-signed candidate for standalone phone QA.
+- Missing Android tools: install Android SDK build-tools and platform-tools, then set `ANDROID_HOME`.

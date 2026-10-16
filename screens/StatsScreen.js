@@ -12,7 +12,9 @@ import Svg, { Path, Circle, Text as SvgText, Line } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../utils/theme';
 import { getActivities, formatDistance, formatDuration } from '../utils/storage';
-import { WalkingIcon, BikingIcon, ChevronRightIcon, TrackIcon } from '../components/Icons';
+import { ActivityTypeIcon, ChevronRightIcon, TrackIcon } from '../components/Icons';
+import { ACTIVITY_TYPES, getActivityLabel, getActivityRouteColor, usesPace } from '../utils/activityTypes';
+import { mergeProgressSettings } from '../utils/progressSettings';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const GRAPH_WIDTH = SCREEN_WIDTH - 48;
@@ -40,10 +42,7 @@ export default function StatsScreen() {
   const [progressActivePage, setProgressActivePage] = useState(0);
   const progressPagerRef = useRef(null);
   
-  const [progressSettings, setProgressSettings] = useState({
-    walking: { daily: 10, weekly: 10, monthly: 10 },
-    biking: { daily: 10, weekly: 10, monthly: 10 },
-  });
+  const [progressSettings, setProgressSettings] = useState(() => mergeProgressSettings());
 
   useEffect(() => {
     loadProgressSettings();
@@ -53,7 +52,7 @@ export default function StatsScreen() {
     try {
       const saved = await AsyncStorage.getItem(PROGRESS_SETTINGS_KEY);
       if (saved) {
-        setProgressSettings(JSON.parse(saved));
+        setProgressSettings(mergeProgressSettings(JSON.parse(saved)));
       }
     } catch (e) {
       console.log('Error loading progress settings:', e);
@@ -69,10 +68,11 @@ export default function StatsScreen() {
   };
 
   const adjustCount = (activityType, graphType, delta) => {
-    const newSettings = { ...progressSettings };
-    const current = newSettings[activityType][graphType];
-    const newValue = Math.max(1, Math.min(20, current + delta));
-    newSettings[activityType][graphType] = newValue;
+    const newValue = Math.max(1, Math.min(20, progressSettings[activityType][graphType] + delta));
+    const newSettings = {
+      ...progressSettings,
+      [activityType]: { ...progressSettings[activityType], [graphType]: newValue },
+    };
     setProgressSettings(newSettings);
     saveProgressSettings(newSettings);
   };
@@ -191,8 +191,8 @@ export default function StatsScreen() {
     return totals;
   };
 
-  // Pace helper: returns avg pace in min/unit for a set of activities
-  const calcAvgPace = (activityList, unit) => {
+  // Returns pace for walking/running and speed for biking.
+  const calcAvgMetric = (activityList, type, unit) => {
     const valid = activityList.filter(a => a.distance > 0 && a.duration > 0);
     if (valid.length === 0) return null;
     const totalDistUnit = valid.reduce((sum, a) => {
@@ -200,7 +200,7 @@ export default function StatsScreen() {
     }, 0);
     const totalMinutes = valid.reduce((sum, a) => sum + a.duration / 60, 0);
     if (totalDistUnit === 0) return null;
-    return totalMinutes / totalDistUnit;
+    return usesPace(type) ? totalMinutes / totalDistUnit : totalDistUnit / (totalMinutes / 60);
   };
 
   const formatPaceValue = (minPerUnit) => {
@@ -221,7 +221,7 @@ export default function StatsScreen() {
         const activityDate = new Date(a.timestamp);
         return a.type === type && activityDate >= date && activityDate < nextDate;
       });
-      const pace = calcAvgPace(dayActivities, distanceUnit);
+      const pace = calcAvgMetric(dayActivities, type, distanceUnit);
       totals.push({
         label: date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
         value: pace !== null ? formatPaceValue(pace) : 0,
@@ -255,7 +255,7 @@ export default function StatsScreen() {
       d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
       const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
       const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-      const pace = calcAvgPace(weekActivities, distanceUnit);
+      const pace = calcAvgMetric(weekActivities, type, distanceUnit);
       totals.push({
         label: `W${weekNum}`,
         value: pace !== null ? formatPaceValue(pace) : 0,
@@ -275,7 +275,7 @@ export default function StatsScreen() {
         const activityDate = new Date(a.timestamp);
         return a.type === type && activityDate >= monthStart && activityDate < monthEnd;
       });
-      const pace = calcAvgPace(monthActivities, distanceUnit);
+      const pace = calcAvgMetric(monthActivities, type, distanceUnit);
       totals.push({
         label: monthStart.toLocaleDateString('en-GB', { month: 'short' }),
         value: pace !== null ? formatPaceValue(pace) : 0,
@@ -286,7 +286,9 @@ export default function StatsScreen() {
   };
 
   // Progress graph - generic for both distance and pace
-  const renderProgressGraph = (data, title, activityType, graphType, count, isPace = false) => {
+  const renderProgressGraph = (data, title, activityType, graphType, count, metricMode = null) => {
+    const isMetric = metricMode !== null;
+    const isPace = metricMode === 'pace';
     const padding = { left: 10, right: 10, top: 28, bottom: 22 };
     const graphW = GRAPH_WIDTH - padding.left - padding.right;
     const availableH = SCREEN_HEIGHT - 24 - 50 - 38 - 80 - 8;
@@ -300,6 +302,7 @@ export default function StatsScreen() {
 
     const formatValue = (val) => {
       if (isPace) return val > 0 ? `${val}'` : '';
+      if (metricMode === 'speed') return val > 0 ? val.toFixed(1) : '';
       return distanceUnit === 'miles' ? (val * 0.621371).toFixed(1) : val.toFixed(1);
     };
 
@@ -331,12 +334,14 @@ export default function StatsScreen() {
 
     let summaryLabel = '';
     let summaryValue = '';
-    if (isPace) {
+    if (isMetric) {
       const validPoints = data.filter(d => d.hasData && d.value > 0);
       if (validPoints.length > 0) {
         const avg = validPoints.reduce((s, d) => s + d.value, 0) / validPoints.length;
         summaryLabel = 'Avg:';
-        summaryValue = `${avg.toFixed(1)}'`;
+        summaryValue = isPace
+          ? `${avg.toFixed(1)}'/${distanceUnit === 'miles' ? 'mi' : 'km'}`
+          : `${avg.toFixed(1)} ${distanceUnit === 'miles' ? 'mph' : 'km/h'}`;
       }
     } else {
       const periodTotal = data.reduce((sum, d) => sum + d.value, 0);
@@ -400,8 +405,8 @@ export default function StatsScreen() {
             <Text style={[styles.backButtonText, { color: theme.primary }]}>Back</Text>
           </TouchableOpacity>
           <View style={styles.progressTitleContainer}>
-            {progressType === 'walking' ? <WalkingIcon size={24} color={theme.primary} /> : <BikingIcon size={24} color={theme.primary} />}
-            <Text style={[styles.progressTitle, { color: theme.text }]}>{progressType === 'walking' ? 'Walking' : 'Biking'} Progress</Text>
+            <ActivityTypeIcon type={progressType} size={24} color={getActivityRouteColor(progressType)} />
+            <Text style={[styles.progressTitle, { color: theme.text }]}>{getActivityLabel(progressType)} Progress</Text>
           </View>
           <View style={styles.backButton} />
         </View>
@@ -418,7 +423,7 @@ export default function StatsScreen() {
             style={[styles.pageTab, progressActivePage === 1 && { borderBottomColor: theme.primary, borderBottomWidth: 2 }]}
             onPress={() => progressPagerRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: true })}
           >
-            <Text style={[styles.pageTabText, { color: progressActivePage === 1 ? theme.primary : theme.textSecondary }]}>Pace</Text>
+            <Text style={[styles.pageTabText, { color: progressActivePage === 1 ? theme.primary : theme.textSecondary }]}>{usesPace(progressType) ? 'Pace' : 'Speed'}</Text>
           </TouchableOpacity>
         </View>
 
@@ -433,16 +438,16 @@ export default function StatsScreen() {
         >
           {/* Page 1: Distance */}
           <View style={[styles.progressPage, { width: SCREEN_WIDTH }]}>
-            {renderProgressGraph(getDailyTotals(progressType, settings.daily), 'Daily Distance', progressType, 'daily', settings.daily, false)}
-            {renderProgressGraph(getWeeklyTotals(progressType, settings.weekly), 'Weekly Distance', progressType, 'weekly', settings.weekly, false)}
-            {renderProgressGraph(getMonthlyTotals(progressType, settings.monthly), 'Monthly Distance', progressType, 'monthly', settings.monthly, false)}
+            {renderProgressGraph(getDailyTotals(progressType, settings.daily), 'Daily Distance', progressType, 'daily', settings.daily)}
+            {renderProgressGraph(getWeeklyTotals(progressType, settings.weekly), 'Weekly Distance', progressType, 'weekly', settings.weekly)}
+            {renderProgressGraph(getMonthlyTotals(progressType, settings.monthly), 'Monthly Distance', progressType, 'monthly', settings.monthly)}
           </View>
 
           {/* Page 2: Pace */}
           <View style={[styles.progressPage, { width: SCREEN_WIDTH }]}>
-            {renderProgressGraph(getDailyPaceTotals(progressType, settings.daily), 'Daily Pace', progressType, 'daily', settings.daily, true)}
-            {renderProgressGraph(getWeeklyPaceTotals(progressType, settings.weekly), 'Weekly Pace', progressType, 'weekly', settings.weekly, true)}
-            {renderProgressGraph(getMonthlyPaceTotals(progressType, settings.monthly), 'Monthly Pace', progressType, 'monthly', settings.monthly, true)}
+            {renderProgressGraph(getDailyPaceTotals(progressType, settings.daily), `Daily ${usesPace(progressType) ? 'Pace' : 'Speed'}`, progressType, 'daily', settings.daily, usesPace(progressType) ? 'pace' : 'speed')}
+            {renderProgressGraph(getWeeklyPaceTotals(progressType, settings.weekly), `Weekly ${usesPace(progressType) ? 'Pace' : 'Speed'}`, progressType, 'weekly', settings.weekly, usesPace(progressType) ? 'pace' : 'speed')}
+            {renderProgressGraph(getMonthlyPaceTotals(progressType, settings.monthly), `Monthly ${usesPace(progressType) ? 'Pace' : 'Speed'}`, progressType, 'monthly', settings.monthly, usesPace(progressType) ? 'pace' : 'speed')}
           </View>
         </ScrollView>
       </View>
@@ -460,14 +465,12 @@ export default function StatsScreen() {
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.progressButtonContainer}>
         <View style={styles.progressButtonRow}>
-          <TouchableOpacity style={[styles.progressButton, styles.progressButtonHalf, { backgroundColor: theme.accent }]} onPress={() => setProgressType('walking')}>
-            <WalkingIcon size={20} color="#fff" />
-            <Text style={styles.progressButtonText}>Walking Progress</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.progressButton, styles.progressButtonHalf, { backgroundColor: theme.accent }]} onPress={() => setProgressType('biking')}>
-            <BikingIcon size={20} color="#fff" />
-            <Text style={styles.progressButtonText}>Biking Progress</Text>
-          </TouchableOpacity>
+          {ACTIVITY_TYPES.map(type => (
+            <TouchableOpacity key={type.id} style={[styles.progressButton, styles.progressButtonThird, { backgroundColor: type.routeColor }]} onPress={() => setProgressType(type.id)}>
+              <ActivityTypeIcon type={type.id} size={19} color="#fff" />
+              <Text style={styles.progressButtonText}>{type.shortLabel}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       </View>
 
@@ -496,7 +499,10 @@ export default function StatsScreen() {
               <View style={styles.statsRow}>
                 <View style={styles.statItem}><Text style={[styles.statValue, { color: theme.text }]}>{filtered.length}</Text><Text style={[styles.statLabel, { color: theme.textSecondary }]}>Activities</Text></View>
                 <View style={styles.statItem}><Text style={[styles.statValue, { color: theme.text }]}>{formatDuration(totalDuration)}</Text><Text style={[styles.statLabel, { color: theme.textSecondary }]}>Time</Text></View>
+              </View>
+              <View style={[styles.statsRow, { marginTop: 14 }]}>
                 <View style={styles.statItem}><Text style={[styles.statValue, { color: theme.text }]}>{filtered.filter(a => a.type === 'walking').length}</Text><Text style={[styles.statLabel, { color: theme.textSecondary }]}>Walks</Text></View>
+                <View style={styles.statItem}><Text style={[styles.statValue, { color: theme.text }]}>{filtered.filter(a => a.type === 'running').length}</Text><Text style={[styles.statLabel, { color: theme.textSecondary }]}>Runs</Text></View>
                 <View style={styles.statItem}><Text style={[styles.statValue, { color: theme.text }]}>{filtered.filter(a => a.type === 'biking').length}</Text><Text style={[styles.statLabel, { color: theme.textSecondary }]}>Rides</Text></View>
               </View>
             </View>
@@ -511,10 +517,10 @@ export default function StatsScreen() {
               <TouchableOpacity key={activity.id} style={[styles.recentActivity, { backgroundColor: theme.cardBg }]} onPress={() => navigation.navigate('ActivityDetail', { activityId: activity.id })}>
                 <View style={styles.recentActivityLeft}>
                   <View style={[styles.recentIcon, { backgroundColor: theme.primaryLight }]}>
-                    {activity.type === 'walking' ? <WalkingIcon size={20} color={theme.primary} /> : <BikingIcon size={20} color={theme.primary} />}
+                    <ActivityTypeIcon type={activity.type} size={20} color={getActivityRouteColor(activity.type)} />
                   </View>
                   <View style={styles.recentInfo}>
-                    <Text style={[styles.recentType, { color: theme.text }]}>{activity.type === 'walking' ? 'Walking' : 'Biking'}</Text>
+                    <Text style={[styles.recentType, { color: theme.text }]}>{getActivityLabel(activity.type)}</Text>
                     <Text style={[styles.recentDate, { color: theme.textSecondary }]}>{new Date(activity.timestamp).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</Text>
                   </View>
                 </View>
@@ -540,8 +546,8 @@ const styles = StyleSheet.create({
   progressButtonContainer: { paddingHorizontal: 16, marginBottom: 16, paddingTop: 16 },
   progressButtonRow: { flexDirection: 'row', gap: 12 },
   progressButton: { paddingVertical: 14, borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
-  progressButtonHalf: { flex: 1 },
-  progressButtonText: { color: '#fff', fontSize: 14, fontFamily: 'Inter_700Bold' },
+  progressButtonThird: { flex: 1 },
+  progressButtonText: { color: '#fff', fontSize: 12, fontFamily: 'Inter_700Bold' },
   section: { paddingHorizontal: 16, marginBottom: 16 },
   sectionTitle: { fontSize: 11, fontFamily: 'Inter_700Bold', letterSpacing: 0.5, marginBottom: 8 },
   card: { borderRadius: 12, padding: 16 },

@@ -32,7 +32,8 @@ import {
   calculateElevationGain,
   autoExportActivityGPX,
 } from '../utils/storage';
-import { WalkingIcon, BikingIcon, PlayIcon, StopIcon, MapIcon, DownloadIcon, RecenterIcon, PauseIcon, CheckIcon, CacheSuccessIcon, TrashIcon } from '../components/Icons';
+import { ActivityTypeIcon, PlayIcon, StopIcon, MapIcon, DownloadIcon, RecenterIcon, PauseIcon, CheckIcon, CacheSuccessIcon, TrashIcon } from '../components/Icons';
+import { ACTIVITY_TYPES, getActivityRouteColor, getDefaultActivityName, usesPace } from '../utils/activityTypes';
 import Svg, { Path, Circle } from 'react-native-svg';
 
 const LOCATION_TASK_NAME = 'background-location-task';
@@ -379,13 +380,13 @@ export default function TrackingScreen() {
         latitude: c.latitude,
         longitude: c.longitude
       })));
-      const color = activityType === 'walking' ? '#1976D2' : '#D32F2F';
+      const color = getActivityRouteColor(activityType);
       webViewRef.current.injectJavaScript(`
         updateRoute(${routeJson}, '${color}');
         true;
       `);
     }
-  }, [routeCoordinates, mapReady]);
+  }, [routeCoordinates, mapReady, activityType]);
 
   useEffect(() => {
     if (mapReady && webViewRef.current) {
@@ -669,7 +670,7 @@ export default function TrackingScreen() {
       );
 
       // Build success message with gamification info
-      let message = `${activityType === 'walking' ? 'Walk' : 'Ride'}: ${formatDistance(finalDistance, distanceUnit)} in ${formatDuration(duration)}`;
+      let message = `${getDefaultActivityName(activityType)}: ${formatDistance(finalDistance, distanceUnit)} in ${formatDuration(duration)}`;
 
       if (gamificationError) {
         message += '\n\n\u26a0 XP/challenge updates may need refreshing';
@@ -759,12 +760,6 @@ export default function TrackingScreen() {
     
     if (webViewRef.current) {
       webViewRef.current.injectJavaScript(`clearRoute(); true;`);
-    }
-  };
-
-  const toggleActivityType = () => {
-    if (!isTracking) {
-      setActivityType(prev => prev === 'walking' ? 'biking' : 'walking');
     }
   };
 
@@ -1409,29 +1404,23 @@ export default function TrackingScreen() {
         {/* Activity Type Selector - HIDDEN when tracking */}
         {!isTracking && (
           <View style={styles.activitySelector}>
-            <TouchableOpacity
-              style={[
-                styles.activityButton,
-                { borderColor: theme.border, backgroundColor: theme.cardBg },
-                activityType === 'walking' && { borderColor: theme.primary, backgroundColor: theme.primaryLight },
-              ]}
-              onPress={toggleActivityType}
-            >
-              <WalkingIcon size={28} color={activityType === 'walking' ? theme.primary : theme.icon} />
-              <Text style={[styles.activityText, { color: theme.text }]}>Walking</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[
-                styles.activityButton,
-                { borderColor: theme.border, backgroundColor: theme.cardBg },
-                activityType === 'biking' && { borderColor: theme.primary, backgroundColor: theme.primaryLight },
-              ]}
-              onPress={toggleActivityType}
-            >
-              <BikingIcon size={28} color={activityType === 'biking' ? theme.primary : theme.icon} />
-              <Text style={[styles.activityText, { color: theme.text }]}>Biking</Text>
-            </TouchableOpacity>
+            {ACTIVITY_TYPES.map(type => (
+              <TouchableOpacity
+                key={type.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: activityType === type.id }}
+                accessibilityLabel={`Select ${type.label}`}
+                style={[
+                  styles.activityButton,
+                  { borderColor: theme.border, backgroundColor: theme.cardBg },
+                  activityType === type.id && { borderColor: type.routeColor, backgroundColor: theme.primaryLight },
+                ]}
+                onPress={() => setActivityType(type.id)}
+              >
+                <ActivityTypeIcon type={type.id} size={26} color={activityType === type.id ? type.routeColor : theme.icon} />
+                <Text style={[styles.activityText, { color: theme.text }]}>{type.shortLabel}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
@@ -1447,11 +1436,11 @@ export default function TrackingScreen() {
           </View>
           <View style={[styles.statBox, { backgroundColor: theme.surface }]}>
             <Text style={[styles.statLabel, { color: theme.textSecondary }]}>
-              {activityType === 'walking' ? 'Pace' : 'Speed'}
+              {usesPace(activityType) ? 'Pace' : 'Speed'}
             </Text>
             <Text style={[styles.statValue, { color: theme.primary }]}>
               {currentSpeed > 0 
-                ? (activityType === 'walking' 
+                ? (usesPace(activityType)
                     ? `${(60 / (currentSpeed * (distanceUnit === 'miles' ? 0.621371 : 1))).toFixed(1)}'/${distanceUnit === 'miles' ? 'mi' : 'km'}`
                     : `${(currentSpeed * (distanceUnit === 'miles' ? 0.621371 : 1)).toFixed(1)} ${distanceUnit === 'miles' ? 'mph' : 'km/h'}`)
                 : '--'

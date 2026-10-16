@@ -34,7 +34,7 @@ import {
   getSelectedChallengeProgress,
 } from '../utils/gamification';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { WalkingIcon, BikingIcon, ChevronRightIcon, TrackIcon } from '../components/Icons';
+import { ChevronRightIcon, TrackIcon } from '../components/Icons';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -475,7 +475,7 @@ export default function XPScreen() {
                   selectedChallenge.target === challengeDef.target && !selectedChallenge.completed;
                 return (
                   <TouchableOpacity
-                    key={"${challengeDef.templateId}_"}
+                    key={`${challengeDef.templateId}_${challengeDef.target}`}
                     style={[styles.challenge, { backgroundColor: isActive ? theme.primaryLight : theme.surface, opacity: isActive ? 0.6 : 1 }]}
                     disabled={isActive}
                     onPress={async () => {
@@ -677,7 +677,7 @@ const renderAbandonConfirm = () => {
   // --- Full Achievements View ---
   const renderAchievementsView = () => {
     if (!gamification) return null;
-    const categories = { general: 'General', streak: 'Streaks', walking: 'Walking', biking: 'Mountain Biking' };
+    const categories = { general: 'General', streak: 'Streaks', walking: 'Walking', running: 'Running', biking: 'Mountain Biking' };
     return (
       <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
         <View style={styles.achievementsViewHeader}>

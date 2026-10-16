@@ -40,6 +40,10 @@ export const WalkingIcon = ({ size = 24, color = '#424242', style }) => (
   <MaterialCommunityIcons name="walk" size={size} color={color} style={style} />
 );
 
+export const RunningIcon = ({ size = 24, color = '#424242', style }) => (
+  <MaterialCommunityIcons name="run-fast" size={size} color={color} style={style} />
+);
+
 // Biking icon — uses MaterialCommunityIcons 'bike' to match achievement icons
 export const BikingIcon = ({ size = 24, color = '#424242', style }) => (
   <MaterialCommunityIcons name="bike" size={size} color={color} style={style} />
@@ -204,6 +208,7 @@ export const UploadIcon = ({ size = 24, color = '#666' }) => (
 // Activity type icon — convenience helper that switches on activity type
 export const ActivityTypeIcon = ({ type, size = 24, color = '#424242', style }) => {
   if (type === 'walking') return <WalkingIcon size={size} color={color} style={style} />;
+  if (type === 'running') return <RunningIcon size={size} color={color} style={style} />;
   if (type === 'biking') return <BikingIcon size={size} color={color} style={style} />;
   return <MaterialCommunityIcons name="help-circle-outline" size={size} color={color} style={style} />;
 };

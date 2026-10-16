@@ -1,380 +1,423 @@
-# ============================================================
-# TrailTrackerXP â€” Local APK Build (Windows-native)
-# ============================================================
-# One command: prebuild, gradle build, copy APK to releases/.
-# No WSL, no EAS cloud, no gh CLI required.
-#
-# Usage:
-#   .\scripts\build-and-release.ps1                  # preview build (default, standalone, no Metro)
-#   .\scripts\build-and-release.ps1 -PreviewBuild    # explicit preview build
-#   .\scripts\build-and-release.ps1 -DebugBuild      # dev debug build (requires Metro)
-#   .\scripts\build-and-release.ps1 -ReleaseBuild    # release build (signed, minified)
-#   .\scripts\build-and-release.ps1 -Clean           # nuke gradle cache + android/ first
-#   .\scripts\build-and-release.ps1 -Version 1.1.0   # bump version before build
-#
-# Build modes:
-#   -PreviewBuild (default): assembleRelease with debug signing. JS bundled into APK.
-#     Standalone â€” no Metro needed. Use this for phone QA.
-#   -DebugBuild: assembleDebug. JS loaded from Metro at runtime.
-#     Requires Metro running. Use for live development.
-#   -ReleaseBuild: assembleRelease with proper release signing + minification.
-#     Use only when cutting a public release.
-#
-# Requirements (all on this Windows host):
-#   - JDK 21 at C:\Program Files\Java\jdk-21
-#   - Android SDK at D:\dev\android-sdk
-#   - Node.js + npm
-#   - For -ReleaseBuild: env vars TRAILTRACKER_STORE_PASSWORD and TRAILTRACKER_KEY_PASSWORD
-# 
-#   ⚠️  ProGuard / minification is PERMANENTLY DISABLED. It strips the
-#      background location tracking service and breaks activity recording.
-#      Do NOT re-enable it in build.gradle or gradle.properties.
-# ============================================================
+# TrailTrackerXP local Android build and candidate-promotion workflow.
+# Phone QA uses the production release variant and established release signer.
+# ProGuard/minification must remain disabled because it breaks background tracking.
 
 [CmdletBinding()]
 param(
-    [string]$Version = "",
-
-    [switch]$DebugBuild,
-
+    [switch]$CandidateBuild,
     [switch]$PreviewBuild,
-
     [switch]$ReleaseBuild,
-
-    [switch]$Clean
+    [switch]$DebugBuild,
+    [string]$VerifyCandidate,
+    [string]$PromoteCandidate,
+    [string]$PromotionOutput,
+    [string]$ReferenceApk,
+    [switch]$Clean,
+    [string]$Version = ''
 )
 
-# --- Constants ---
-$APP_NAME = "TrailTrackerXP"
-$SCRIPT_DIR = $PSScriptRoot
-$REPO_DIR = Split-Path $SCRIPT_DIR -Parent
-$RELEASES_DIR = Join-Path $REPO_DIR "releases"
-$APP_JSON_PATH = Join-Path $REPO_DIR "app.json"
-$ANDROID_DIR = Join-Path $REPO_DIR "android"
+$ErrorActionPreference = 'Stop'
+$APP_NAME = 'TrailTrackerXP'
+$EXPECTED_PACKAGE = 'com.trailtrackerxp.app'
+$EXPECTED_CERTIFICATE_SHA256 = '109e6bbd3f73cbb50927e1ed24c184c30146a70dc509073a0f03603e1accbed2'
+$KEY_ALIAS = 'trailtracker'
+$REPO_DIR = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$APP_JSON_PATH = Join-Path $REPO_DIR 'app.json'
+$ANDROID_DIR = Join-Path $REPO_DIR 'android'
+$RELEASES_DIR = Join-Path $REPO_DIR 'releases'
+$CANDIDATES_DIR = Join-Path $RELEASES_DIR 'candidates'
+$DEBUG_DIR = Join-Path $RELEASES_DIR 'debug'
+$KEYSTORE_PATH = $env:TRAILTRACKER_SIGNING_STORE_FILE
 
-$JDK_PATH = "C:\Program Files\Java\jdk-21"
-$ANDROID_SDK = "D:\dev\android-sdk"
-$UTF8_NO_BOM = [System.Text.UTF8Encoding]::new($false)
-
-# Default to preview if no build mode is specified
-if (-not $DebugBuild -and -not $ReleaseBuild) { $PreviewBuild = $true }
-
-function Write-File-NoBom([string]$Path, [string]$Content) {
-    [System.IO.File]::WriteAllText($Path, $Content, $UTF8_NO_BOM)
-}
-
-# --- Determine current version ---
-$AppJson = Get-Content $APP_JSON_PATH -Raw | ConvertFrom-Json
-$CurrentVersion = [string]$AppJson.expo.version
-if (-not $CurrentVersion) {
-    Write-Error "Could not read expo.version from app.json."
-    exit 1
-}
-
-# --- Handle version bump ---
-if ($Version) {
-    if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-        Write-Error "Version must use numeric X.Y.Z format, for example 1.1.0."
-        exit 1
+function Get-AppMetadata {
+    $config = Get-Content -LiteralPath $APP_JSON_PATH -Raw | ConvertFrom-Json
+    $versionName = [string]$config.expo.version
+    $versionCode = [int]$config.expo.android.versionCode
+    $packageName = [string]$config.expo.android.package
+    if ($versionName -notmatch '^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$') {
+        throw 'app.json expo.version is missing or invalid.'
     }
-    $AppJson.expo.version = $Version
-    Write-File-NoBom $APP_JSON_PATH ($AppJson | ConvertTo-Json -Depth 10)
-    $CurrentVersion = $Version
-    Write-Host "  Version bumped to $Version" -ForegroundColor Green
-}
-
-# --- Determine build type, gradle task, APK path, and output name ---
-if ($DebugBuild) {
-    $BuildMode = "dev-debug"
-    $BuildType = "debug"
-    $GradleTask = "assembleDebug"
-    $ApkSubPath = Join-Path "android" (Join-Path "app" (Join-Path "build" (Join-Path "outputs" (Join-Path "apk" (Join-Path "debug" "app-debug.apk")))))
-    $ApkName = "$APP_NAME-v$CurrentVersion-dev-debug.apk"
-} elseif ($ReleaseBuild) {
-    $BuildMode = "release"
-    $BuildType = "release"
-    $GradleTask = "assembleRelease"
-    $ApkSubPath = Join-Path "android" (Join-Path "app" (Join-Path "build" (Join-Path "outputs" (Join-Path "apk" (Join-Path "release" "app-release.apk")))))
-    $ApkName = "$APP_NAME-v$CurrentVersion.apk"
-} else {
-    # Preview build: uses assembleRelease with debug signing (already configured by Expo prebuild)
-    # This bundles JS into the APK but signs with the debug keystore â€” standalone, no Metro needed
-    $BuildMode = "preview"
-    $BuildType = "release"
-    $GradleTask = "assembleRelease"
-    $ApkSubPath = Join-Path "android" (Join-Path "app" (Join-Path "build" (Join-Path "outputs" (Join-Path "apk" (Join-Path "release" "app-release.apk")))))
-    $ApkName = "$APP_NAME-v$CurrentVersion-preview.apk"
-}
-
-$ApkPath = Join-Path $REPO_DIR $ApkSubPath
-$OutputPath = Join-Path $RELEASES_DIR $ApkName
-
-# --- Branch ---
-$Branch = (git -C $REPO_DIR rev-parse --abbrev-ref HEAD 2>&1)
-if ($LASTEXITCODE -ne 0) { $Branch = "unknown" }
-
-# --- Banner ---
-Write-Host ""
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  $APP_NAME - Local $BuildMode build" -ForegroundColor Cyan
-Write-Host "  Version: $CurrentVersion" -ForegroundColor Cyan
-Write-Host "  Branch:  $Branch" -ForegroundColor Cyan
-Write-Host "  JDK:     $JDK_PATH" -ForegroundColor Cyan
-Write-Host "  SDK:     $ANDROID_SDK" -ForegroundColor Cyan
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
-
-# --- Verify tools ---
-Write-Host "[0/5] Verifying build tools..."
-
-if (-not (Test-Path (Join-Path $JDK_PATH "bin\java.exe"))) {
-    Write-Error "JDK not found at $JDK_PATH"
-    exit 1
-}
-Write-Host "  JDK 21  OK"
-
-if (-not (Test-Path (Join-Path $ANDROID_SDK "platform-tools\adb.exe"))) {
-    Write-Error "Android SDK not found at $ANDROID_SDK"
-    exit 1
-}
-Write-Host "  Android SDK  OK"
-
-if (-not (Test-Path (Join-Path $REPO_DIR "node_modules\package.json"))) {
-    Write-Host "  node_modules missing -- will install in step 2" -ForegroundColor Yellow
-} else {
-    Write-Host "  node_modules  OK"
-}
-
-if ($ReleaseBuild) {
-    $apksigner = Get-ChildItem (Join-Path $ANDROID_SDK "build-tools") -Recurse -Filter "apksigner.bat" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $apksigner) {
-        Write-Error "apksigner.bat not found in $ANDROID_SDK build-tools (needed for release signing)"
-        exit 1
+    if ($versionCode -lt 1) { throw 'app.json android.versionCode must be a positive integer.' }
+    if ($packageName -ne $EXPECTED_PACKAGE) {
+        throw "Unexpected Android package '$packageName'; expected '$EXPECTED_PACKAGE'."
     }
-    Write-Host "  apksigner  OK"
+    [pscustomobject]@{ VersionName = $versionName; VersionCode = $versionCode; PackageName = $packageName }
 }
 
-# --- Set environment ---
-$env:JAVA_HOME = $JDK_PATH
-$env:ANDROID_HOME = $ANDROID_SDK
-$env:ANDROID_SDK_ROOT = $ANDROID_SDK
-$jdkBin = Join-Path $JDK_PATH "bin"
-$sdkPlatformTools = Join-Path $ANDROID_SDK "platform-tools"
-$env:PATH = "$jdkBin;$sdkPlatformTools;$env:PATH"
+function Resolve-JdkHome {
+    $candidates = @($env:JAVA_HOME, 'C:\Program Files\Java\jdk-21', 'C:\Program Files\Android\Android Studio\jbr') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    foreach ($candidate in $candidates) {
+        $java = Join-Path $candidate 'bin\java.exe'
+        $keytool = Join-Path $candidate 'bin\keytool.exe'
+        if ((Test-Path -LiteralPath $java -PathType Leaf) -and (Test-Path -LiteralPath $keytool -PathType Leaf)) {
+            $versionOutput = (& $java -version 2>&1) -join "`n"
+            if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'version "21(?:\.|\")') {
+                return [IO.Path]::GetFullPath($candidate)
+            }
+        }
+    }
+    throw 'JDK 21 was not found. Set JAVA_HOME or install it at C:\Program Files\Java\jdk-21.'
+}
 
-Set-Location $REPO_DIR
+function Resolve-AndroidSdk {
+    $candidates = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, 'D:\dev\android-sdk') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath (Join-Path $candidate 'platform-tools\adb.exe') -PathType Leaf) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+    throw 'Android SDK was not found. Set ANDROID_HOME or install it at D:\dev\android-sdk.'
+}
 
-# --- Optional: clean ---
-if ($Clean) {
-    Write-Host ""
-    Write-Host "[clean] Removing gradle caches and generated android project..."
-    $buildPaths = @(
-        (Join-Path $ANDROID_DIR "app\build"),
-        (Join-Path $ANDROID_DIR "build"),
-        (Join-Path $ANDROID_DIR ".gradle")
+function Resolve-BuildTool([string]$Sdk, [string]$Name) {
+    $tool = Get-ChildItem -LiteralPath (Join-Path $Sdk 'build-tools') -Filter $Name -Recurse -File -ErrorAction SilentlyContinue |
+        Sort-Object { try { [version]$_.Directory.Name } catch { [version]'0.0' } } -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+    if (-not $tool) { throw "Android build tool '$Name' was not found under $Sdk." }
+    $tool
+}
+
+function Assert-SigningInputs([string]$Keytool, [switch]$RequirePrivateKey) {
+    if (-not $RequirePrivateKey) {
+        return $EXPECTED_CERTIFICATE_SHA256
+    }
+    if ([string]::IsNullOrWhiteSpace($KEYSTORE_PATH) -or
+        -not (Test-Path -LiteralPath $KEYSTORE_PATH -PathType Leaf)) {
+        throw 'Private release keystore is unavailable. Use scripts/build-signed-local.ps1.'
+    }
+    if ([string]::IsNullOrWhiteSpace($env:TRAILTRACKER_STORE_PASSWORD) -or
+        [string]::IsNullOrWhiteSpace($env:TRAILTRACKER_KEY_PASSWORD)) {
+        throw 'Release signing passwords are missing. Set TRAILTRACKER_STORE_PASSWORD and TRAILTRACKER_KEY_PASSWORD.'
+    }
+    $keyOutput = & $Keytool -list -v -keystore $KEYSTORE_PATH -alias $KEY_ALIAS `
+        -storepass:env TRAILTRACKER_STORE_PASSWORD 2>&1
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the established release keystore.' }
+    $match = [regex]::Match(($keyOutput -join "`n"), '(?m)^\s*SHA256:\s*([0-9A-Fa-f:]+)')
+    if (-not $match.Success) { throw 'The release keystore SHA-256 fingerprint was not reported by keytool.' }
+    $digest = $match.Groups[1].Value.Replace(':', '').ToLowerInvariant()
+    if ($digest -ne $EXPECTED_CERTIFICATE_SHA256) {
+        throw 'The release keystore does not match the pinned TrailTrackerXP release certificate.'
+    }
+    $digest
+}
+
+function Get-ApkIdentity([string]$Path, [string]$Aapt) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "APK does not exist: $Path" }
+    $badging = & $Aapt dump badging $Path 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect APK manifest: $Path" }
+    $firstLine = [string]($badging | Select-Object -First 1)
+    $match = [regex]::Match($firstLine, "package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'")
+    if (-not $match.Success) { throw "APK package/version metadata was not recognized: $Path" }
+    [pscustomobject]@{
+        PackageName = $match.Groups[1].Value
+        VersionCode = [int]$match.Groups[2].Value
+        VersionName = $match.Groups[3].Value
+    }
+}
+
+function Test-ReleaseApk(
+    [string]$Path,
+    [string]$Apksigner,
+    [string]$Aapt,
+    [string]$KeystoreDigest,
+    [string]$ExpectedVersionName = '',
+    [int]$ExpectedVersionCode = 0
+) {
+    $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    $identity = Get-ApkIdentity -Path $resolved -Aapt $Aapt
+    if ($identity.PackageName -ne $EXPECTED_PACKAGE) {
+        throw "APK package '$($identity.PackageName)' does not match '$EXPECTED_PACKAGE': $resolved"
+    }
+    if ($ExpectedVersionName -and $identity.VersionName -ne $ExpectedVersionName) {
+        throw "APK versionName '$($identity.VersionName)' does not match app.json '$ExpectedVersionName'."
+    }
+    if ($ExpectedVersionCode -gt 0 -and $identity.VersionCode -ne $ExpectedVersionCode) {
+        throw "APK versionCode '$($identity.VersionCode)' does not match app.json '$ExpectedVersionCode'."
+    }
+    $verifyOutput = & $Apksigner verify --verbose --print-certs $resolved 2>&1
+    $verifyText = $verifyOutput -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $verifyText -notmatch '(?m)^Verifies$') {
+        throw "APK signature verification failed: $resolved"
+    }
+    if ($verifyText -notmatch 'Verified using v2 scheme \(APK Signature Scheme v2\): true') {
+        throw "APK Signature Scheme v2 is required: $resolved"
+    }
+    $signerCount = [regex]::Match($verifyText, 'Number of signers:\s*(\d+)')
+    if (-not $signerCount.Success -or [int]$signerCount.Groups[1].Value -ne 1) {
+        throw "APK must have exactly one signer: $resolved"
+    }
+    $digestMatch = [regex]::Match($verifyText, 'Signer #1 certificate SHA-256 digest:\s*([0-9A-Fa-f]+)')
+    if (-not $digestMatch.Success) { throw "APK signer fingerprint is missing: $resolved" }
+    $apkDigest = $digestMatch.Groups[1].Value.ToLowerInvariant()
+    if ($apkDigest -ne $KeystoreDigest -or $apkDigest -ne $EXPECTED_CERTIFICATE_SHA256) {
+        throw "APK signer does not match the established TrailTrackerXP release signer: $resolved"
+    }
+    [pscustomobject]@{
+        Path = $resolved
+        PackageName = $identity.PackageName
+        VersionName = $identity.VersionName
+        VersionCode = $identity.VersionCode
+        CertificateSha256 = $apkDigest
+        V1 = $verifyText -match 'Verified using v1 scheme \(JAR signing\): true'
+        V2 = $true
+        V3 = $verifyText -match 'Verified using v3 scheme \(APK Signature Scheme v3\): true'
+        Size = (Get-Item -LiteralPath $resolved).Length
+        Sha256 = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash
+    }
+}
+
+function Resolve-ReferencePath([string]$ExplicitPath, [string]$CanonicalPath, [string]$CandidatePath) {
+    if ($ExplicitPath) { return (Resolve-Path -LiteralPath $ExplicitPath -ErrorAction Stop).Path }
+    if ((Test-Path -LiteralPath $CanonicalPath -PathType Leaf) -and
+        ([IO.Path]::GetFullPath($CanonicalPath) -ine [IO.Path]::GetFullPath($CandidatePath))) {
+        return (Resolve-Path -LiteralPath $CanonicalPath).Path
+    }
+    $null
+}
+
+function Assert-NondecreasingVersionCode($CandidateInfo, [string]$ReferencePath, [string]$Apksigner,
+    [string]$Aapt, [string]$KeystoreDigest) {
+    if (-not $ReferencePath) {
+        Write-Warning 'No reference APK was supplied or found; versionCode downgrade protection could not compare an installed/released APK.'
+        return
+    }
+    $referenceInfo = Test-ReleaseApk -Path $ReferencePath -Apksigner $Apksigner -Aapt $Aapt `
+        -KeystoreDigest $KeystoreDigest
+    if ($CandidateInfo.VersionCode -lt $referenceInfo.VersionCode) {
+        throw "Candidate versionCode $($CandidateInfo.VersionCode) is lower than reference versionCode $($referenceInfo.VersionCode)."
+    }
+    Write-Host "Reference APK: $($referenceInfo.Path) (versionCode $($referenceInfo.VersionCode))"
+}
+
+function Set-GeneratedAndroidConfig($AppMetadata, [switch]$ReleaseSigning) {
+    $gradlePath = Join-Path $ANDROID_DIR 'app\build.gradle'
+    $propertiesPath = Join-Path $ANDROID_DIR 'gradle.properties'
+    if (-not (Test-Path -LiteralPath $gradlePath -PathType Leaf)) { throw 'Generated Android build.gradle is missing.' }
+    $content = Get-Content -LiteralPath $gradlePath -Raw
+    $content = [regex]::Replace($content, '(?m)^\s*versionCode\s+\d+\s*$', "        versionCode $($AppMetadata.VersionCode)")
+    $content = [regex]::Replace($content, '(?m)^\s*versionName\s+"[^"]+"\s*$', "        versionName `"$($AppMetadata.VersionName)`"")
+    if ($ReleaseSigning) {
+        if ($content -match "storeFile\s+file\('release\.keystore'\)") {
+            throw 'Unsafe legacy generated signing config detected. Regenerate android/ before building.'
+        }
+        if ($content -notmatch 'TRAILTRACKER_STORE_PASSWORD') {
+            $debugMatch = [regex]::Match($content, '(?ms)signingConfigs\s*\{\s*debug\s*\{.*?^\s{8}\}\s*')
+            if (-not $debugMatch.Success) { throw 'Could not locate the generated debug signing configuration.' }
+            $releaseBlock = @"
+
+        release {
+            storeFile file(System.getenv('TRAILTRACKER_SIGNING_STORE_FILE'))
+            storePassword System.getenv('TRAILTRACKER_STORE_PASSWORD')
+            keyAlias '$KEY_ALIAS'
+            keyPassword System.getenv('TRAILTRACKER_KEY_PASSWORD')
+        }
+"@
+            $content = $content.Insert($debugMatch.Index + $debugMatch.Length, $releaseBlock)
+        }
+        $releaseSigningPattern = '(?ms)(buildTypes\s*\{.*?^\s{8}release\s*\{.*?signingConfig\s+)signingConfigs\.debug'
+        if ($content -notmatch $releaseSigningPattern -and $content -notmatch '(?ms)^\s{8}release\s*\{.*?signingConfig\s+signingConfigs\.release') {
+            throw 'Could not locate the generated release build type signing configuration.'
+        }
+        $content = [regex]::Replace($content, $releaseSigningPattern, '${1}signingConfigs.release', 1)
+    }
+    [IO.File]::WriteAllText($gradlePath, $content, [Text.UTF8Encoding]::new($false))
+    $properties = Get-Content -LiteralPath $propertiesPath -Raw
+    $requiredProperties = @(
+        'android.enableProguardInReleaseBuilds=false',
+        'android.enableShrinkResourcesInReleaseBuilds=false'
     )
-    foreach ($p in $buildPaths) {
-        Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
-    }
-    if (Test-Path $ANDROID_DIR) {
-        Remove-Item -Recurse -Force $ANDROID_DIR -ErrorAction SilentlyContinue
-    }
-    Write-Host "  done"
-}
-
-# --- Step 1: npm install ---
-Write-Host ""
-Write-Host "[1/5] npm install..."
-npm install --no-audit --no-fund 2>&1 | Select-Object -Last 3
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "npm install failed (exit $LASTEXITCODE)"
-    exit 1
-}
-Write-Host "  npm install  OK"
-
-# --- Step 2: Expo prebuild (generate android/ if missing) ---
-Write-Host ""
-Write-Host "[2/5] Expo prebuild..."
-$gradlewPath = Join-Path $ANDROID_DIR "gradlew.bat"
-if (-not (Test-Path $gradlewPath)) {
-    Write-Host "  android/ not found -- running npx expo prebuild..."
-    npx expo prebuild --platform android 2>&1 | Select-Object -Last 10
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "expo prebuild failed (exit $LASTEXITCODE)"
-        exit 1
-    }
-    Write-Host "  prebuild  OK"
-} else {
-    Write-Host "  android/ already exists -- skipping prebuild"
-}
-
-# --- Icon resource patch: copy supplied icon pack into generated Android resources ---
-$ICON_SRC = Join-Path $REPO_DIR "assets\native-icons\android_icons"
-$RES_DIR = Join-Path $ANDROID_DIR "app\src\main\res"
-
-if ((Test-Path $ICON_SRC) -and (Test-Path $RES_DIR)) {
-    Write-Host "  Patching icon resources from assets/native-icons/..."
-
-    # Launcher icons -> mipmap folders (all densities)
-    $densities = @('mdpi','hdpi','xhdpi','xxhdpi','xxxhdpi')
-    foreach ($density in $densities) {
-        $srcDir = Join-Path $ICON_SRC "mipmap-$density"
-        $dstDir = Join-Path $RES_DIR "mipmap-$density"
-        if (Test-Path $srcDir) {
-            New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
-            # Launcher icon (and round variant -- same source, no separate round in pack)
-            $launcherSrc = Join-Path $srcDir "ic_launcher.png"
-            if (Test-Path $launcherSrc) {
-                Copy-Item $launcherSrc (Join-Path $dstDir "ic_launcher.png") -Force
-                Copy-Item $launcherSrc (Join-Path $dstDir "ic_launcher_round.png") -Force
-            }
-            # Notification icon -> drawable-<density> folders
-            $notifSrc = Join-Path $srcDir "ic_notification.png"
-            if (Test-Path $notifSrc) {
-                $drawableDstDir = Join-Path $RES_DIR "drawable-$density"
-                New-Item -ItemType Directory -Force -Path $drawableDstDir | Out-Null
-                Copy-Item $notifSrc (Join-Path $drawableDstDir "ic_notification.png") -Force
-            }
+    foreach ($property in $requiredProperties) {
+        $propertyName = $property.Split('=')[0]
+        if ($properties -match "(?m)^$([regex]::Escape($propertyName))=(?!false\s*$)") {
+            throw "Generated Android property '$propertyName' must remain false for background tracking."
+        }
+        if ($properties -notmatch "(?m)^$([regex]::Escape($property))\s*$") {
+            $properties = $properties.TrimEnd() + "`r`n$property`r`n"
         }
     }
-
-    # Remove generated adaptive icon XML so Android falls back to density PNGs
-    # (Expo generates these referencing its own foreground artwork which causes the overflow)
-    $anydpiDir = Join-Path $RES_DIR "mipmap-anydpi-v26"
-    Remove-Item (Join-Path $anydpiDir "ic_launcher.xml") -Force -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $anydpiDir "ic_launcher_round.xml") -Force -ErrorAction SilentlyContinue
-    Write-Host "  Removed adaptive icon XML (using density PNGs instead)  OK"
-
-    Write-Host "  Launcher + notification icons patched  OK"
-} else {
-    Write-Host "  Icon pack source not found at $ICON_SRC -- skipping icon patch" -ForegroundColor Yellow
+    [IO.File]::WriteAllText($propertiesPath, $properties, [Text.UTF8Encoding]::new($false))
+    $legacyCopiedKeystore = Join-Path $ANDROID_DIR 'app\release.keystore'
+    if (Test-Path -LiteralPath $legacyCopiedKeystore -PathType Leaf) {
+        Remove-Item -LiteralPath $legacyCopiedKeystore -Force
+    }
 }
 
-# Patch expo-location's LocationTaskService to use the monochrome notification icon
-# instead of the full-colour launcher icon (fixes notification tray showing coloured icon)
-$taskServicePath = Join-Path $REPO_DIR "node_modules\expo-location\android\src\main\java\expo\modules\location\services\LocationTaskService.kt"
-if (Test-Path $taskServicePath) {
-    $tsContent = Get-Content $taskServicePath -Raw
-    $patched = $false
-    if ($tsContent -match 'setSmallIcon\(applicationInfo\.icon\)') {
-        $tsContent = $tsContent -replace 'setSmallIcon\(applicationInfo\.icon\)', 'setSmallIcon(android.R.drawable.ic_notification)'
-        $patched = $true
+function Patch-GeneratedResources {
+    $iconSource = Join-Path $REPO_DIR 'assets\native-icons\android_icons'
+    $resourceDirectory = Join-Path $ANDROID_DIR 'app\src\main\res'
+    if ((Test-Path -LiteralPath $iconSource) -and (Test-Path -LiteralPath $resourceDirectory)) {
+        foreach ($density in @('mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi')) {
+            $sourceDirectory = Join-Path $iconSource "mipmap-$density"
+            $destinationDirectory = Join-Path $resourceDirectory "mipmap-$density"
+            if (Test-Path -LiteralPath $sourceDirectory) {
+                New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+                $launcher = Join-Path $sourceDirectory 'ic_launcher.png'
+                if (Test-Path -LiteralPath $launcher) {
+                    Copy-Item -LiteralPath $launcher -Destination (Join-Path $destinationDirectory 'ic_launcher.png') -Force
+                    Copy-Item -LiteralPath $launcher -Destination (Join-Path $destinationDirectory 'ic_launcher_round.png') -Force
+                }
+                $notification = Join-Path $sourceDirectory 'ic_notification.png'
+                if (Test-Path -LiteralPath $notification) {
+                    $drawableDirectory = Join-Path $resourceDirectory "drawable-$density"
+                    New-Item -ItemType Directory -Force -Path $drawableDirectory | Out-Null
+                    Copy-Item -LiteralPath $notification -Destination (Join-Path $drawableDirectory 'ic_notification.png') -Force
+                }
+            }
+        }
+        $adaptiveDirectory = Join-Path $resourceDirectory 'mipmap-anydpi-v26'
+        Remove-Item -LiteralPath (Join-Path $adaptiveDirectory 'ic_launcher.xml') -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $adaptiveDirectory 'ic_launcher_round.xml') -Force -ErrorAction SilentlyContinue
     }
-    if ($tsContent -match 'setSmallIcon\(resources\.getIdentifier\("ic_notification"') {
-        # Keep existing resources.getIdentifier patch
-        $patched = $true
+    $taskService = Join-Path $REPO_DIR 'node_modules\expo-location\android\src\main\java\expo\modules\location\services\LocationTaskService.kt'
+    if (Test-Path -LiteralPath $taskService -PathType Leaf) {
+        $taskContent = Get-Content -LiteralPath $taskService -Raw
+        $taskContent = $taskContent -replace 'setSmallIcon\(applicationInfo\.icon\)', 'setSmallIcon(android.R.drawable.ic_notification)'
+        $taskContent = $taskContent -replace '\.setColorized\(true\)', '.setColorized(false)'
+        [IO.File]::WriteAllText($taskService, $taskContent, [Text.UTF8Encoding]::new($false))
     }
-    if ($tsContent -match 'setSmallIcon\(R\.drawable\.ic_notification\)') {
-        # Keep R.drawable version if present (works if R class has the resource)
-        $patched = $true
+}
+
+if ($Version) { throw 'Build-time version mutation is disabled. Update and review app.json deliberately before building.' }
+$candidateAliasCount = @($CandidateBuild, $PreviewBuild, $ReleaseBuild).Where({ $_ }).Count
+if ($candidateAliasCount -gt 1) { throw 'Use only one of -CandidateBuild, -PreviewBuild, or -ReleaseBuild.' }
+$candidateMode = $candidateAliasCount -eq 1
+$operationCount = @($candidateMode, [bool]$DebugBuild, [bool]$VerifyCandidate, [bool]$PromoteCandidate).Where({ $_ }).Count
+if ($operationCount -eq 0) { $candidateMode = $true; $operationCount = 1 }
+if ($operationCount -ne 1) { throw 'Choose exactly one build, verify, or promotion operation.' }
+if ($Clean -and ($VerifyCandidate -or $PromoteCandidate)) { throw '-Clean only applies to build operations.' }
+if ($PromotionOutput -and -not $PromoteCandidate) { throw '-PromotionOutput requires -PromoteCandidate.' }
+if ($DebugBuild -and $ReferenceApk) { throw '-ReferenceApk applies to signed candidate verification, not debug builds.' }
+if ($ReleaseBuild) { Write-Warning '-ReleaseBuild is now a compatibility alias for -CandidateBuild; it does not create or publish a canonical release.' }
+if ($PreviewBuild) { Write-Host '-PreviewBuild uses the established release signer and is install-over compatible.' }
+
+$app = Get-AppMetadata
+$jdkHome = Resolve-JdkHome
+$androidSdk = Resolve-AndroidSdk
+$keytool = Join-Path $jdkHome 'bin\keytool.exe'
+$apksigner = Resolve-BuildTool -Sdk $androidSdk -Name 'apksigner.bat'
+$aapt = Resolve-BuildTool -Sdk $androidSdk -Name 'aapt.exe'
+$canonicalArtifact = Join-Path $RELEASES_DIR "$APP_NAME-v$($app.VersionName).apk"
+if ($VerifyCandidate -or $PromoteCandidate -or $candidateMode) {
+    $keystoreDigest = Assert-SigningInputs -Keytool $keytool -RequirePrivateKey:$candidateMode
+}
+
+if ($VerifyCandidate -or $PromoteCandidate) {
+    $candidatePath = if ($VerifyCandidate) { $VerifyCandidate } else { $PromoteCandidate }
+    $candidate = Test-ReleaseApk -Path $candidatePath -Apksigner $apksigner -Aapt $aapt `
+        -KeystoreDigest $keystoreDigest -ExpectedVersionName $app.VersionName -ExpectedVersionCode $app.VersionCode
+    $referencePath = Resolve-ReferencePath -ExplicitPath $ReferenceApk -CanonicalPath $canonicalArtifact -CandidatePath $candidate.Path
+    Assert-NondecreasingVersionCode -CandidateInfo $candidate -ReferencePath $referencePath `
+        -Apksigner $apksigner -Aapt $aapt -KeystoreDigest $keystoreDigest
+    Write-Host "Candidate: $($candidate.Path)"
+    Write-Host "Package/version: $($candidate.PackageName) $($candidate.VersionName) ($($candidate.VersionCode))"
+    Write-Host "Certificate SHA-256: $($candidate.CertificateSha256)"
+    Write-Host "Signature schemes: v1=$($candidate.V1), v2=$($candidate.V2), v3=$($candidate.V3)"
+    Write-Host "Size: $($candidate.Size) bytes"
+    Write-Host "SHA-256: $($candidate.Sha256)"
+    if ($VerifyCandidate) {
+        Write-Host 'Verification only. No build, copy, tag, push, or publication occurred.'
+        return
     }
-    if (-not $patched) {
-        # Fallback: use resources.getIdentifier (no import needed)
-        $tsContent = $tsContent -replace 'setSmallIcon\([^)]+\)', 'setSmallIcon(resources.getIdentifier("ic_notification", "drawable", packageName))'
-        $patched = $true
-    }
-    if ($patched) {
-        # Also disable setColorized(true) so the notification row isn't force-tinted
-        $tsContent = $tsContent -replace '\.setColorized\(true\)', '.setColorized(false)'
-        [System.IO.File]::WriteAllText($taskServicePath, $tsContent, [System.Text.UTF8Encoding]::new($false))
-        Write-Host "  patched LocationTaskService for notification icon  OK"
+    $promotionArtifact = if ($PromotionOutput) {
+        [IO.Path]::GetFullPath((Join-Path $REPO_DIR $PromotionOutput))
     } else {
-        Write-Host "  LocationTaskService already patched or pattern not found"
+        $canonicalArtifact
     }
+    if (Test-Path -LiteralPath $promotionArtifact) {
+        throw "Promotion artifact already exists; refusing to overwrite: $promotionArtifact"
+    }
+    $promotionDirectory = Split-Path -Parent $promotionArtifact
+    New-Item -ItemType Directory -Force -Path $promotionDirectory | Out-Null
+    Copy-Item -LiteralPath $candidate.Path -Destination $promotionArtifact
+    $promotedHash = (Get-FileHash -LiteralPath $promotionArtifact -Algorithm SHA256).Hash
+    if ($promotedHash -ne $candidate.Sha256 -or (Get-Item -LiteralPath $promotionArtifact).Length -ne $candidate.Size) {
+        throw 'Promoted artifact does not exactly match the validated candidate.'
+    }
+    Write-Host "Promoted exact candidate bytes: $promotionArtifact"
+    Write-Host 'Local promotion only. No GitHub release, tag, commit, or push occurred.'
+    return
 }
 
-# --- Step 3a: Patch build.gradle for release signing (BEFORE gradle build) ---
-if ($ReleaseBuild) {
-    # Copy release keystore into android/app/ (survives clean because it lives in repo root)
-    $releaseKeystoreSrc = Join-Path $REPO_DIR "release.keystore"
-    $releaseKeystoreDst = Join-Path $ANDROID_DIR "app\release.keystore"
-    if (-not (Test-Path $releaseKeystoreSrc)) {
-        Write-Error "release.keystore not found at $releaseKeystoreSrc. Cannot build release without signing key."
-        exit 1
-    }
-    Copy-Item $releaseKeystoreSrc $releaseKeystoreDst -Force
-    Write-Host "  Copied release.keystore into android/app/  OK"
-
-    $buildGradlePath = Join-Path $ANDROID_DIR "app\build.gradle"
-    if (Test-Path $buildGradlePath) {
-        $gradleContent = Get-Content $buildGradlePath -Raw
-        # Check if release signingConfig already exists with our keystore
-        if ($gradleContent -match 'release\.keystore') {
-            Write-Host "  build.gradle already patched for release signing  OK"
-        } else {
-            # Add release signing config after the debug block
-            $storePwd = $env:TRAILTRACKER_STORE_PASSWORD
-            $keyPwd = $env:TRAILTRACKER_KEY_PASSWORD
-            if (-not $storePwd -or -not $keyPwd) {
-                Write-Error "Release signing passwords not set. Set env vars: TRAILTRACKER_STORE_PASSWORD and TRAILTRACKER_KEY_PASSWORD"
-                exit 1
-            }
-            $releaseSigningBlock = "`n        release {`n            storeFile file('release.keystore')`n            storePassword '$storePwd'`n            keyAlias 'trailtracker'`n            keyPassword '$keyPwd'`n        }`n"
-            $gradleContent = $gradleContent -replace '(signingConfigs\s*\{\s*debug\s*\{[^}]*}\s*)', "`$1$releaseSigningBlock"
-            # Replace 'signingConfig signingConfigs.debug' in release buildType
-            $gradleContent = $gradleContent -replace 'signingConfig signingConfigs\.debug', 'signingConfig signingConfigs.release'
-            [System.IO.File]::WriteAllText($buildGradlePath, $gradleContent, [System.Text.UTF8Encoding]::new($false))
-            Write-Host "  Patched build.gradle for release signing  OK"
+$previousEnvironment = @{}
+foreach ($name in @('JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'TEMP', 'TMP', 'GRADLE_OPTS')) {
+    $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+$shortTemp = Join-Path $env:SystemDrive 'TrailTrackerXP-tmp'
+try {
+    New-Item -ItemType Directory -Force -Path $shortTemp | Out-Null
+    $env:JAVA_HOME = $jdkHome
+    $env:ANDROID_HOME = $androidSdk
+    $env:ANDROID_SDK_ROOT = $androidSdk
+    $env:TEMP = $shortTemp
+    $env:TMP = $shortTemp
+    $unixSocketOption = "-Djdk.net.unixdomain.tmpdir=$shortTemp"
+    $env:GRADLE_OPTS = if ($env:GRADLE_OPTS) { "$($env:GRADLE_OPTS) $unixSocketOption" } else { $unixSocketOption }
+    Push-Location $REPO_DIR
+    try {
+        npm install --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
+        $gradle = Join-Path $ANDROID_DIR 'gradlew.bat'
+        if (-not (Test-Path -LiteralPath $gradle -PathType Leaf)) {
+            npx expo prebuild --platform android --no-install
+            if ($LASTEXITCODE -ne 0) { throw 'Expo Android prebuild failed.' }
         }
+        Set-GeneratedAndroidConfig -AppMetadata $app -ReleaseSigning:$candidateMode
+        Patch-GeneratedResources
+        Push-Location $ANDROID_DIR
+        try {
+            if ($Clean) {
+                & $gradle clean --no-daemon
+                if ($LASTEXITCODE -ne 0) { throw 'Gradle clean failed.' }
+            }
+            $task = if ($DebugBuild) { 'assembleDebug' } else { 'assembleRelease' }
+            & $gradle $task --no-daemon
+            if ($LASTEXITCODE -ne 0) { throw "Gradle $task failed." }
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        Pop-Location
+    }
+    if ($DebugBuild) {
+        $sourceApk = Join-Path $ANDROID_DIR 'app\build\outputs\apk\debug\app-debug.apk'
+        if (-not (Test-Path -LiteralPath $sourceApk -PathType Leaf)) { throw 'Debug APK was not produced.' }
+        $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+        New-Item -ItemType Directory -Force -Path $DEBUG_DIR | Out-Null
+        $artifact = Join-Path $DEBUG_DIR "$APP_NAME-v$($app.VersionName)-vc$($app.VersionCode)-dev-debug-$stamp.apk"
+        if (Test-Path -LiteralPath $artifact) { throw "Debug output already exists: $artifact" }
+        Copy-Item -LiteralPath $sourceApk -Destination $artifact
+        $identity = Get-ApkIdentity -Path $artifact -Aapt $aapt
+        Write-Host "Dev debug APK: $artifact"
+        Write-Host "Package/version: $($identity.PackageName) $($identity.VersionName) ($($identity.VersionCode))"
+        Write-Host "SHA-256: $((Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash)"
+        Write-Host 'Debug builds require Metro and cannot update a release-signed installation.'
+        return
+    }
+    $sourceApk = Join-Path $ANDROID_DIR 'app\build\outputs\apk\release\app-release.apk'
+    if (-not (Test-Path -LiteralPath $sourceApk -PathType Leaf)) { throw 'Release candidate APK was not produced.' }
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+    New-Item -ItemType Directory -Force -Path $CANDIDATES_DIR | Out-Null
+    $artifact = Join-Path $CANDIDATES_DIR "$APP_NAME-v$($app.VersionName)-vc$($app.VersionCode)-candidate-$stamp.apk"
+    if (Test-Path -LiteralPath $artifact) { throw "Candidate output already exists: $artifact" }
+    Copy-Item -LiteralPath $sourceApk -Destination $artifact
+    $sourceHash = (Get-FileHash -LiteralPath $sourceApk -Algorithm SHA256).Hash
+    $candidate = Test-ReleaseApk -Path $artifact -Apksigner $apksigner -Aapt $aapt `
+        -KeystoreDigest $keystoreDigest -ExpectedVersionName $app.VersionName -ExpectedVersionCode $app.VersionCode
+    if ($sourceHash -ne $candidate.Sha256) { throw 'Candidate copy does not match the Gradle-signed APK bytes.' }
+    $referencePath = Resolve-ReferencePath -ExplicitPath $ReferenceApk -CanonicalPath $canonicalArtifact -CandidatePath $candidate.Path
+    Assert-NondecreasingVersionCode -CandidateInfo $candidate -ReferencePath $referencePath `
+        -Apksigner $apksigner -Aapt $aapt -KeystoreDigest $keystoreDigest
+    Write-Host "Signed candidate: $($candidate.Path)"
+    Write-Host "Package/version: $($candidate.PackageName) $($candidate.VersionName) ($($candidate.VersionCode))"
+    Write-Host "Certificate SHA-256: $($candidate.CertificateSha256)"
+    Write-Host "Signature schemes: v1=$($candidate.V1), v2=$($candidate.V2), v3=$($candidate.V3)"
+    Write-Host "Size: $($candidate.Size) bytes"
+    Write-Host "SHA-256: $($candidate.Sha256)"
+    Write-Host 'Candidate only. Test these exact bytes before using -PromoteCandidate; nothing was published.'
+} finally {
+    foreach ($name in $previousEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
     }
 }
-
-# --- Step 3: Gradle build ---
-Write-Host ""
-Write-Host "[3/5] Building APK with Gradle ($BuildType)..."
-Set-Location $ANDROID_DIR
-if ($ReleaseBuild) {
-    # ProGuard/minification disabled â€” strips code the tracking service needs
-    & .\gradlew.bat $GradleTask '--no-daemon' 2>&1 | Tee-Object -FilePath "$env:TEMP\gradle-build-trailtracker.log" | Select-Object -Last 10
-} else {
-    & .\gradlew.bat $GradleTask '--no-daemon' 2>&1 | Tee-Object -FilePath "$env:TEMP\gradle-build-trailtracker.log" | Select-Object -Last 10
-}
-$gradleExit = $LASTEXITCODE
-Set-Location $REPO_DIR
-
-if ($gradleExit -ne 0) {
-    Write-Error "gradle build failed (exit $gradleExit). Log: $env:TEMP\gradle-build-trailtracker.log"
-    exit 1
-}
-Write-Host "  BUILD SUCCESSFUL  OK"
-
-# --- Step 4: Verify signing (release mode builds signed APK during gradle build) ---
-if ($ReleaseBuild) {
-    Write-Host ""
-    Write-Host "[4/5] Verifying APK signing..."
-
-    $apksigner = Get-ChildItem (Join-Path $ANDROID_SDK "build-tools") -Recurse -Filter "apksigner.bat" -ErrorAction SilentlyContinue | Select-Object -First 1
-    $verifyOutput = (& $apksigner.FullName verify --verbose $ApkPath 2>&1) -join "`n"
-    if (-not $verifyOutput.Contains("Verifies")) {
-        Write-Error "Signature verification failed. Output: $verifyOutput"
-        exit 1
-    }
-    Write-Host "  Signed (v2/v3) with release keystore  OK"
-} elseif ($PreviewBuild) {
-    Write-Host ""
-    Write-Host "[4/5] Preview build -- signed with debug keystore (configured in build.gradle)"
-} else {
-    Write-Host ""
-    Write-Host "[4/5] Dev debug build -- no signing needed"
-}
-
-Write-Host ""
-Write-Host "[5/5] Copying APK to releases/..."
-New-Item -ItemType Directory -Force -Path $RELEASES_DIR | Out-Null
-Copy-Item $ApkPath $OutputPath -Force
-$apkSize = [math]::Round((Get-Item $OutputPath).Length / 1MB, 1)
-Write-Host ("  {0} ({1:N1} MB)  OK" -f $ApkName, $apkSize)
-
-# --- Done ---
-Write-Host ""
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  Build complete!" -ForegroundColor Cyan
-Write-Host ("  APK: {0}" -f $OutputPath) -ForegroundColor Green
-Write-Host ("  Size: {0:N1} MB" -f $apkSize) -ForegroundColor Cyan
-Write-Host "  Mode: $BuildMode" -ForegroundColor Cyan
-if ($PreviewBuild) {
-    Write-Host "  Standalone: YES (no Metro required)" -ForegroundColor Green
-} elseif ($DebugBuild) {
-    Write-Host "  Standalone: NO (requires Metro running)" -ForegroundColor Yellow
-}
-Write-Host "==========================================" -ForegroundColor Cyan

@@ -14,7 +14,8 @@ import Svg, { Path, Polyline, Circle as SvgCircle, Rect } from 'react-native-svg
 import { useTheme } from '../utils/theme';
 import { getActivities, deleteActivity, formatDistance, formatDuration } from '../utils/storage';
 import { loadRouteFromFile } from '../utils/fileStorage';
-import { WalkingIcon, BikingIcon, ChevronRightIcon, TrackIcon } from '../components/Icons';
+import { ActivityTypeIcon, ChevronRightIcon, TrackIcon } from '../components/Icons';
+import { getActivityLabel, getActivityRouteColor } from '../utils/activityTypes';
 
 // Trash icon for delete modal
 const TrashIcon = ({ size = 24, color = '#D32F2F' }) => (
@@ -71,7 +72,7 @@ const ActivityThumbnail = ({ route, type, theme, size = 80 }) => {
     return `${x},${y}`;
   }).join(' ');
   
-  const routeColor = type === 'walking' ? '#1976D2' : '#D32F2F';
+  const routeColor = getActivityRouteColor(type);
   
   // Get start and end points
   const startX = offsetX + (route[0].longitude - minLng) * lngCorrectionFactor * scale;
@@ -154,7 +155,8 @@ export default function CalendarScreen() {
         marks[date] = { marked: true, dots: [] };
       }
       marks[date].dots.push({
-        color: activity.type === 'walking' ? '#1976D2' : '#D32F2F',
+        key: activity.id,
+        color: getActivityRouteColor(activity.type),
       });
     });
     
@@ -291,15 +293,11 @@ export default function CalendarScreen() {
                     <View style={styles.activityHeader}>
                       <View style={styles.activityTitleRow}>
                         <View style={[styles.iconContainer, { backgroundColor: theme.primaryLight }]}>
-                          {activity.type === 'walking' ? (
-                            <WalkingIcon size={20} color={theme.primary} />
-                          ) : (
-                            <BikingIcon size={20} color={theme.primary} />
-                          )}
+                          <ActivityTypeIcon type={activity.type} size={20} color={getActivityRouteColor(activity.type)} />
                         </View>
                         <View style={styles.activityInfo}>
                           <Text style={[styles.activityTitle, { color: theme.text }]}>
-                            {activity.type === 'walking' ? 'Walking' : 'Biking'}
+                            {getActivityLabel(activity.type)}
                           </Text>
                           <Text style={[styles.activityTime, { color: theme.textSecondary }]}>
                             {new Date(activity.timestamp).toLocaleTimeString([], {

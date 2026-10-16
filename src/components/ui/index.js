@@ -20,6 +20,6 @@
 export { default as AppScreen } from './AppScreen';
 export { default as Card } from './Card';
 export { default as SectionHeader } from './SectionHeader';
-export { default as StatRow, { StatItem } from './StatRow';
+export { default as StatRow, StatItem } from './StatRow';
 export { default as EmptyState } from './EmptyState';
 export { default as Modal, ModalOverlay, ModalButton, ModalTitle, ModalMessage } from './Modal';
